@@ -167,15 +167,18 @@ Loading safetensors checkpoint shards: 100% Completed | 2/2 [00:04<00:00,  2.05s
 To utilize multiple tiles for larger models (`TP>1`), a more advanced setup is necessary. First, configure a Ray cluster.
 ```bash linenums="1"
 export VLLM_HOST_IP=$(getent hosts $(hostname).hsn.cm.aurora.alcf.anl.gov | awk '{ print $1 }' | tr ' ' '\n' | sort | head -n 1)
+export no_proxy="localhost,127.0.0.1" # Set no_proxy for the client to interact with the locally hosted model
 unset ONEAPI_DEVICE_SELECTOR # allow Ray to access all 12 GPU tiles
 ray start --head --node-ip-address=$VLLM_HOST_IP --num-cpus=96 --num-gpus=12 &
-export no_proxy="localhost,127.0.0.1" # Set no_proxy for the client to interact with the locally hosted model
 ```
 
 The following script demonstrates how to serve the `meta-llama/Llama-2-7b-chat-hf` model across 8 tiles on a single node:
 
 ```bash linenums="1"
 export VLLM_HOST_IP=$(getent hosts $(hostname).hsn.cm.aurora.alcf.anl.gov | awk '{ print $1 }' | tr ' ' '\n' | sort | head -n 1)
+export no_proxy="localhost,127.0.0.1"
+unset ONEAPI_DEVICE_SELECTOR
+ray start --head --node-ip-address=$VLLM_HOST_IP --num-cpus=96 --num-gpus=12 &
 vllm serve meta-llama/Llama-2-7b-chat-hf --port 8000 --tensor-parallel-size 8 --trust-remote-code
 ```
 
