@@ -52,6 +52,7 @@ vllm serve meta-llama/Llama-2-7b-chat-hf
 
 <details>
 <summary>Click for example output</summary>
+
 ```console
 (/opt/aurora/25.190.0/frameworks/aurora_frameworks-2025.2.0) raffenet@x4516c6s1b0n0:~> vllm serve meta-llama/Llama-2-7b-chat-hf
 
@@ -158,6 +159,7 @@ Loading safetensors checkpoint shards: 100% Completed | 2/2 [00:04<00:00,  2.05s
 (APIServer pid=206609) INFO:     Waiting for application startup.
 (APIServer pid=206609) INFO:     Application startup complete.
 ```
+
 </details>
 
 #### Using Multiple Tiles
