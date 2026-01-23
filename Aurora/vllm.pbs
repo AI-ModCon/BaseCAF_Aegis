@@ -55,19 +55,8 @@ mpiexec -ppn 1 --cpu-bind numa $BCAST_BIN "$MODEL_SOURCE" "$MODEL_DEST"
 copy_end=$(date +%s)
 weights_copy_time=$((copy_end - copy_start))
 
-# --- 2. CONFIGURE VLLM ---
+# --- 2. RUN VLLM ---
 export HF_TOKEN
-export HF_HOME="/tmp/hf_home"
-
-export ZE_FLAT_DEVICE_HIERARCHY=FLAT
-unset CCL_PROCESS_LAUNCHER
-export CCL_PROCESS_LAUNCHER=None
-export VLLM_WORKER_MULTIPROC_METHOD=spawn
-export FI_MR_CACHE_MONITOR=userfaultfd
-export TORCH_COMPILE_DISABLE=1
-export OMP_NUM_THREADS=16
-
-# --- 4. RUN VLLM ---
 echo "Starting vLLM instances..."
 mpiexec -ppn 1 -o %a/%h/out.%R ./start_instance.sh
 
@@ -76,5 +65,5 @@ if [ -z "$checkpoint_start" ]; then
     checkpoint_start=$end_time
 fi
 
-# --- 5. REPORT METRICS ---
+# --- 3. REPORT METRICS ---
 # TODO
