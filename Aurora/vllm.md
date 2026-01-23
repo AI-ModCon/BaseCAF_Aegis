@@ -27,21 +27,21 @@ INFO 11-06 16:55:07 [__init__.py:241] Automatically detected platform xpu.
 0.10.1rc2.dev189+ge2db1164a.xpu
 ```
 
-## Access Model Weights
+## Model Weights
 
-Model weights for commonly used open-weight models are downloaded and available in the `/flare/datasets/model-weights/hub` directory on Aurora. To ensure your workflows utilize the preloaded model weights and datasets, update the following environment variables in your session. Some models hosted on Hugging Face may be gated, requiring additional authentication. To access these gated models, you will need a [Hugging Face authentication token](https://huggingface.co/docs/hub/en/security-tokens).
+Model weights for commonly used open-weight models are downloaded and available in the `/flare/datasets/model-weights/hub` directory on Aurora. However accessing these weights from more than a single GPU can be very time-consuming. We recommend reading the weights once from the parallel filesystem and distributing them to node local storage with MPI using [tools/bcast.c].
 ```bash linenums="1"
-export HF_HOME="/flare/datasets/model-weights"
-export HF_DATASETS_CACHE="/flare/datasets/model-weights"
-export HF_MODULES_CACHE="/flare/datasets/model-weights"
+export HF_HOME="/tmp/hf_home"
+```
+
+Some models hosted on Hugging Face may be gated, requiring additional authentication. To access these gated models, you will need a [Hugging Face authentication token](https://huggingface.co/docs/hub/en/security-tokens).
+```bash linenums="1"
 export HF_TOKEN="YOUR_HF_TOKEN"
-export RAY_TMPDIR="/tmp"
-export TMPDIR="/tmp"
 ```
 
 ## Serve Small Models
 
-For small models that fit within a single tile's memory (64 GB), no additional configuration is required to serve the model. Simply set `TP=1` (Tensor Parallelism). This configuration ensures the model is run on a single tile without the need for distributed setup. Models with fewer than 7 billion parameters typically fit within a single tile.
+For small models that fit within a single tile's memory (64 GB), no additional configuration is required to serve the model. The model will run on a single tile. Models with fewer than 7 billion parameters typically fit within a single tile.
 
 #### Using Single Tile
 
@@ -162,41 +162,19 @@ Loading safetensors checkpoint shards: 100% Completed | 2/2 [00:04<00:00,  2.05s
 
 </details>
 
-#### Using Multiple Tiles
+#### Serve Medium Models Using Multiple Tiles
 
-To utilize multiple tiles for larger models (`TP>1`), a more advanced setup is necessary. First, configure a Ray cluster.
-```bash linenums="1"
-export VLLM_HOST_IP=$(hostname -I | awk '{print $1}')
-export no_proxy="localhost,127.0.0.1" # Set no_proxy for the client to interact with the locally hosted model
-unset ONEAPI_DEVICE_SELECTOR # allow Ray to access all 12 GPU tiles
-ray start --head --node-ip-address=$VLLM_HOST_IP --num-cpus=96 --num-gpus=12 &
-```
-
-The following script demonstrates how to serve the `meta-llama/Llama-2-7b-chat-hf` model across 8 tiles on a single node:
+The following script demonstrates how to serve the `meta-llama/Llama-3.3-70B-Instruct` model across 8 tiles on a single node using tensor parallelism:
 
 ```bash linenums="1"
-export VLLM_HOST_IP=$(hostname -I | awk '{print $1}')
-export no_proxy="localhost,127.0.0.1"
-unset ONEAPI_DEVICE_SELECTOR
-ray start --head --node-ip-address=$VLLM_HOST_IP --num-cpus=96 --num-gpus=12 &
-vllm serve meta-llama/Llama-2-7b-chat-hf --port 8000 --tensor-parallel-size 8 --trust-remote-code
+module load frameworks
+unset CCL_PROCESS_LAUNCHER # needed for vllm/pytorch to launch additional processes
+mpiexec -ppn 1 ./bcast /flare/datasets/model-weights/hub/models--meta-llama--Llama-3.3-70B-Instruct /tmp/hf_home/hub
+export HF_HOME=/tmp/hf_home
+export HF_TOKEN=<your_token>
+vllm serve meta-llama/Llama-3.3-70B-Instruct --tensor-parallel-size 8
 ```
 
-## Serve Medium Models
-
-#### Using Single Node
-
-The following script demonstrates how to serve `meta-llama/Llama-3.3-70B-Instruct` on 8 tiles on a single node. Models with up to 70 billion parameters can usually fit within a single node, utilizing multiple tiles.
-
-```bash linenums="1"
-export VLLM_HOST_IP=$(hostname -I | awk '{print $1}')
-unset ONEAPI_DEVICE_SELECTOR # allow Ray to access all 12 GPU tiles
-ray start --head --node-ip-address=$VLLM_HOST_IP --num-cpus=96 --num-gpus=12 &
-vllm serve meta-llama/Llama-3.3-70B-Instruct --tensor-parallel-size 8 --trust-remote-code --max-model-len 32768
-```
-
-## Serve Large Models
-
-#### Using Multiple Nodes
+#### Serve Large Models Using Multiple Nodes
 
 coming soon...
