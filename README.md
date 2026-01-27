@@ -8,13 +8,13 @@ This repository provides guides and tools for deploying large language model inf
 - **Architecture:** Intel Xeon CPUs with Intel Data Center GPU Max Series
 - **Framework:** vLLM with XPU backend
 - **Key Features:** 12 GPU tiles per node, 64GB memory per tile
-- **Documentation:** [Aurora/vllm.md](Aurora/vllm.md)
+- **Documentation:** [Aurora/README.md](Aurora/README.md)
 
 ### 🔥 Frontier (AMD)
 - **Architecture:** AMD EPYC CPUs with AMD Instinct GPUs
 - **Framework:** vLLM with ROCm backend
 - **Key Features:** 8 GPU tiles per node, 64GB memory per tile
-- **Documentation:** [Frontier/vllm.md](Frontier/vllm.md)
+- **Documentation:** [Frontier/README.md](Frontier/README.md)
 
 ## Quick Start
 
