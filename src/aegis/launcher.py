@@ -4,6 +4,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 from jinja2 import Environment, PackageLoader
@@ -97,6 +100,46 @@ def stage_weights(config: AegisConfig) -> None:
     print("Weight staging complete.", file=sys.stderr)
 
 
+def _wait_for_instances(
+    endpoints: list[tuple[str, int]],
+    poll_interval: int = 10,
+    timeout: int = 1200,
+) -> None:
+    """Poll /health on each instance until all respond 200 or timeout expires."""
+    ready = set()
+    deadline = time.monotonic() + timeout
+
+    while time.monotonic() < deadline:
+        for node, port in endpoints:
+            if (node, port) in ready:
+                continue
+            url = f"http://{node}:{port}/health"
+            try:
+                with urllib.request.urlopen(url, timeout=5) as resp:
+                    if resp.status == 200:
+                        ready.add((node, port))
+                        print(
+                            f"Instance {node}:{port} is ready "
+                            f"({len(ready)}/{len(endpoints)})",
+                            file=sys.stderr,
+                        )
+            except (urllib.error.URLError, OSError):
+                pass
+
+        if len(ready) == len(endpoints):
+            return
+
+        time.sleep(poll_interval)
+
+    not_ready = [(n, p) for n, p in endpoints if (n, p) not in ready]
+    print(
+        f"Error: Timed out after {timeout}s waiting for instances: "
+        + ", ".join(f"{n}:{p}" for n, p in not_ready),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def launch_instances(config: AegisConfig) -> None:
     """Launch vLLM instances across allocated nodes."""
     nodes = _get_allocated_nodes()
@@ -117,10 +160,12 @@ def launch_instances(config: AegisConfig) -> None:
     template = env.get_template("instance.sh.j2")
 
     processes = []
+    endpoints = []
     for i in range(config.instances):
         port = config.port_start + i
         start_node = i * nodes_per_instance
         instance_nodes = nodes[start_node : start_node + nodes_per_instance]
+        endpoints.append((instance_nodes[0], port))
 
         # Render the per-instance script
         script_content = template.render(
@@ -167,7 +212,8 @@ def launch_instances(config: AegisConfig) -> None:
         )
         processes.append(proc)
 
-    print(f"All {config.instances} instance(s) launched. Waiting...", file=sys.stderr)
+    print(f"All {config.instances} instance(s) launched. Waiting for health checks...", file=sys.stderr)
 
-    for proc in processes:
-        proc.wait()
+    _wait_for_instances(endpoints)
+
+    print(f"All {config.instances} instance(s) are healthy.", file=sys.stderr)
