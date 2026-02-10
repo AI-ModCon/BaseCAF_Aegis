@@ -1,0 +1,25 @@
+#!/bin/bash -l
+
+export HTTP_PROXY=http://proxy.alcf.anl.gov:3128
+export HTTPS_PROXY=http://proxy.alcf.anl.gov:3128
+export http_proxy=http://proxy.alcf.anl.gov:3128
+export https_proxy=http://proxy.alcf.anl.gov:3128
+export no_proxy=localhost,127.0.0.1
+
+module load frameworks
+export CCL_PROCESS_LAUNCHER=torchrun
+export NUMEXPR_MAX_THREADS=208
+
+if [ -z "${HF_TOKEN:-}" ]; then
+    echo "Error: HF_TOKEN not set."
+    exit 1
+fi
+export HF_HOME="{{ hf_home }}"
+
+vllm serve {{ model }} \
+    --tensor-parallel-size {{ tensor_parallel_size }} \
+    --port {{ port }} \
+{% for arg in extra_vllm_args %}    {{ arg }} \
+{% endfor %}
+
+exit 0

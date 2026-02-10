@@ -1,0 +1,53 @@
+#!/bin/bash
+#PBS -N aegis
+#PBS -l walltime={{ config.walltime }}
+#PBS -l select={{ config.nodes_needed }}
+#PBS -l filesystems={{ config.filesystems }}
+#PBS -A {{ config.account }}
+{% if config.queue -%}
+#PBS -q {{ config.queue }}
+{% endif -%}
+#PBS -o aegis_output.log
+#PBS -e aegis_error.log
+
+module load frameworks
+
+export HTTP_PROXY=http://proxy.alcf.anl.gov:3128
+export HTTPS_PROXY=http://proxy.alcf.anl.gov:3128
+export http_proxy=http://proxy.alcf.anl.gov:3128
+export https_proxy=http://proxy.alcf.anl.gov:3128
+export no_proxy=localhost,127.0.0.1
+
+NNODES=$(cat $PBS_NODEFILE | uniq | wc -l)
+
+if [ -z "${HF_TOKEN:-}" ]; then
+    echo "Error: HF_TOKEN not set. Please export it and pass with qsub -v HF_TOKEN"
+    exit 1
+fi
+
+{% if config.model_source %}
+# --- STAGE MODEL WEIGHTS ---
+TOOLS_DIR="${PBS_O_WORKDIR}/tools"
+BCAST_BIN="${PBS_O_WORKDIR}/bcast"
+
+pushd $TOOLS_DIR
+make bcast
+cp bcast $BCAST_BIN
+popd
+
+export MPIR_CVAR_CH4_OFI_ENABLE_MULTI_NIC_STRIPING=1
+export MPIR_CVAR_CH4_OFI_MAX_NICS=4
+
+echo "Staging weights from {{ config.model_source }} to {{ config.hf_home }}/hub..."
+mpiexec -ppn 1 --cpu-bind numa $BCAST_BIN "{{ config.model_source }}" "{{ config.hf_home }}/hub"
+{% endif %}
+
+# --- LAUNCH INSTANCES ---
+aegis launch \
+    --model "{{ config.model }}" \
+    --instances {{ config.instances }} \
+    --tensor-parallel-size {{ config.tensor_parallel_size }} \
+    --port-start {{ config.port_start }} \
+    --hf-home "{{ config.hf_home }}" \
+{% if config.extra_vllm_args %}    --extra-vllm-args {{ config.extra_vllm_args | join(' ') }} \
+{% endif %}

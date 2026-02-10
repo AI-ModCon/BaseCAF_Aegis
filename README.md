@@ -1,110 +1,102 @@
-## Overview
+# Aegis: HPC LLM Instance Launcher
 
-This repository provides guides and tools for deploying large language model inference on high-performance computing systems at ALCF and OLCF. The documentation covers multiple supercomputing platforms with their specific hardware configurations and software stacks.
+Aegis automates launching configurable numbers of vLLM inference instances on HPC clusters. It handles PBS job generation, model weight staging via MPI broadcast, and per-instance orchestration.
 
-## Supported Systems
+Currently targets **Aurora** (PBS). Frontier/Slurm support planned.
 
-### 🌟 Aurora (Intel)
-- **Architecture:** Intel Xeon CPUs with Intel Data Center GPU Max Series
-- **Framework:** vLLM with XPU backend
-- **Key Features:** 12 GPU tiles per node, 64GB memory per tile
-- **Documentation:** [Aurora/README.md](Aurora/README.md)
+## Installation
 
-### 🔥 Frontier (AMD)
-- **Architecture:** AMD EPYC CPUs with AMD Instinct GPUs
-- **Framework:** vLLM with ROCm backend
-- **Key Features:** 8 GPU tiles per node, 64GB memory per tile
-- **Documentation:** [Frontier/README.md](Frontier/README.md)
-
-## Quick Start
-
-### Aurora Setup
 ```bash
-# Load frameworks module with XPU-enabled vLLM
-module load frameworks
-export NUMEXPR_MAX_THREADS=208
-export CCL_PROCESS_LAUNCHER=torchrun
-
-# Configure model weights location
-export HF_HOME="/flare/datasets/model-weights"
-export HF_DATASETS_CACHE="/flare/datasets/model-weights"
-export HF_TOKEN="YOUR_HF_TOKEN"
-
-# Serve a small model (single tile)
-vllm serve meta-llama/Llama-2-7b-chat-hf
+pip install .
 ```
 
-### Frontier Setup
+For development:
+
 ```bash
-# Build ROCm vLLM container
-apptainer build rocm-vllm.sif docker://rocm/vllm-dev:nightly
-
-# Configure proxy settings
-export all_proxy=socks://proxy.ccs.ornl.gov:3128/
-export http_proxy=http://proxy.ccs.ornl.gov:3128/
-export https_proxy=http://proxy.ccs.ornl.gov:3128/
-export HF_TOKEN="YOUR_HF_TOKEN"
-
-# Run in container
-./rocm-vllm.sif vllm serve meta-llama/Llama-2-7b-chat-hf
+pip install -e .
 ```
 
-## Model Categories
+## Usage
 
-### Small Models (< 7B parameters)
-- **Memory:** Fits in single tile (64GB)
-- **Setup:** No distributed configuration needed
-- **Examples:** Llama-2-7B, Mistral-7B
+### Submit a PBS job
 
-### Medium Models (7B-70B parameters)
-- **Memory:** Requires multiple tiles on single node
-- **Setup:** Tensor parallelism across tiles
-- **Examples:** Llama-3.3-70B, Mixtral-8x7B
+Generate and submit a batch job to the PBS queue:
 
-### Large Models (> 70B parameters)
-- **Memory:** Requires multiple nodes
-- **Setup:** Multi-node distributed inference
-- **Status:** Coming soon...
+```bash
+aegis submit --config config.yaml
+```
 
-## Tools and Utilities
+Preview the generated PBS script without submitting:
 
-### Data Staging
-- **`tools/bcast.c`**: MPI-based tool for efficient data distribution across compute nodes
-- **Usage**: Optimized for staging large model weights to local storage
+```bash
+aegis submit --config config.yaml --dry-run
+```
 
-### Job Scripts
-- **`Aurora/start_instance.sh`**: Example script for launching vLLM instances on Aurora
-- **`Aurora/vllm.pbs`**: PBS job configuration for batch submissions
+### Launch inside an existing allocation
 
-## Hardware Specifications
+If you already have a PBS allocation (e.g., via `qsub -I`), launch instances directly:
 
-| System | GPU Type | GPUs/Node | Memory/GPU | Interconnect |
-|--------|-----------|------------|------------|--------------|
-| Aurora | Intel Data Center GPU Max | 12 | 64GB | Slingshot |
-| Frontier | AMD Instinct MI250X | 8 | 64GB | Slingshot |
+```bash
+aegis launch --config config.yaml
+```
 
-## Performance Considerations
+### CLI flags
 
-- **Tensor Parallelism**: Distribute model layers across multiple GPUs
-- **Memory Management**: Utilize pre-cached model weights where available
-- **Network Configuration**: Proper Ray cluster setup for multi-GPU inference
-- **Environment Variables**: System-specific optimizations for each platform
+All config values can be overridden via CLI flags. CLI flags take precedence over the config file.
 
-## Contributing
+```bash
+aegis submit \
+    --model meta-llama/Llama-3.3-70B-Instruct \
+    --instances 2 \
+    --tensor-parallel-size 6 \
+    --account MyProject \
+    --walltime 01:00:00 \
+    --model-source /flare/datasets/model-weights/hub/models--meta-llama--Llama-3.3-70B-Instruct \
+    --dry-run
+```
 
-This repository is actively maintained. Contributions welcome for:
-- Additional system configurations
-- Performance optimization tips
-- New model serving examples
-- Bug fixes and documentation improvements
+## Example Config (YAML)
 
-## Support
+```yaml
+model: meta-llama/Llama-3.3-70B-Instruct
+instances: 2
+tensor_parallel_size: 6
+port_start: 8000
+hf_home: /tmp/hf_home
+model_source: /flare/datasets/model-weights/hub/models--meta-llama--Llama-3.3-70B-Instruct
+walltime: "01:00:00"
+account: MyProject
+filesystems: flare:home
+extra_vllm_args:
+  - --max-model-len
+  - "32768"
+```
 
-For questions or issues:
-1. Check system-specific documentation
-2. Review example outputs in documentation
-3. Contact LCF support teams for platform-specific issues
+## Architecture
 
----
+```
+src/aegis/
+├── cli.py              # CLI entry point (argparse)
+├── config.py           # Config file loading + merging with CLI args
+├── scheduler.py        # PBS job generation and submission
+├── launcher.py         # Core orchestration: stage weights, launch instances
+└── templates/
+    ├── pbs_job.sh.j2   # Jinja2 template for PBS batch script
+    └── instance.sh.j2  # Jinja2 template for per-node vLLM launch script
+```
 
-**Note**: Access to some models may require Hugging Face authentication tokens. Ensure proper token configuration before attempting to serve gated models.
+### How it works
+
+1. **`aegis submit`** renders a PBS batch script from a Jinja2 template and submits it via `qsub`. The generated job script calls `aegis launch` inside the allocation.
+2. **`aegis launch`** runs inside a PBS allocation. It optionally stages model weights to local storage using the MPI broadcast tool (`tools/bcast.c`), then launches one `vllm serve` process per instance on the assigned nodes.
+
+## Platform Documentation
+
+Reference documentation for manual setup on each platform:
+
+- [Aurora](Aurora/README.md) — Intel Data Center GPU Max, PBS
+- [Frontier](Frontier/README.md) — AMD Instinct MI250X, Slurm
+
+## Tools
+
+- **`tools/bcast.c`** — MPI-based tool for efficiently broadcasting model weights to all compute nodes via `tar` streaming.

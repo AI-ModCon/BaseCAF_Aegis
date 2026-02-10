@@ -1,10 +1,11 @@
 # Inference with vLLM on Frontier
 
-## Build and run ROCm vLLM image from AMD DockerHub
+Until there are proven working instructions for running vLLM natively on Frontier nodes, we recommend using the ROCm vLLM Docker images published in the vLLM DockerHub organization.
+
+## Build and run ROCm vLLM image
 ```bash
-apptainer build rocm-vllm.sif docker://rocm/vllm-dev:nightly
-chmod +x rocm-vllm.sif
-./rocm-vllm.sif
+apptainer build vllm-openai-rocm.sif docker://vllm/vllm-openai-rocm
+apptainer shell vllm-openai-rocm.sif
 vllm --version
 ```
 ## Example output from Frontier compute node
@@ -16,7 +17,7 @@ Apptainer> vllm --version
 
 ## Access Model Weights
 
-To my knowledge there are no common models stored on the Frontier filesystem for community use. It may be a good idea to do so for whatever ModCon allocation we receive. TODO: investigate use of the NVMe storage for staging model weights before runs.
+To my knowledge there are no common models stored on the Frontier filesystem for community use. It may be a good idea to do so for whatever ModCon allocation we receive. In any case, we recommend using Frontier's Burst Buffer storage for staging model weights.
 
 When downloading models from Hugging Face you will need to set your http proxy settings for outbound access. Be aware that some gated models also require additional authentication. To access these gated models, you will need a [Hugging Face authentication token](https://huggingface.co/docs/hub/en/security-tokens).
 
@@ -26,12 +27,12 @@ export ftp_proxy=ftp://proxy.ccs.ornl.gov:3128/
 export http_proxy=http://proxy.ccs.ornl.gov:3128/
 export https_proxy=http://proxy.ccs.ornl.gov:3128/
 export no_proxy='localhost,127.0.0.0/8,*.ccs.ornl.gov'
-export HF_TOKEN="YOUR_HF_TOKEN"
+export HF_TOKEN=<your_token>
 ```
 
 ## Serve Small Models
 
-For small models that fit within a single tile's memory (64 GB), no additional configuration is required to serve the model. Simply set `TP=1` (Tensor Parallelism). This configuration ensures the model is run on a single tile without the need for distributed setup. Models with fewer than 7 billion parameters typically fit within a single tile.
+For small models that fit within a single GPU's memory (64 GB), no additional configuration is required to serve the model. The defaultconfiguration ensures the model is run on a single tile without the need for distributed setup. Models with fewer than 7 billion parameters typically fit within a single tile.
 
 #### Using Single Tile
 
