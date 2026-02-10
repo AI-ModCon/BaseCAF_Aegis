@@ -169,6 +169,7 @@ def launch_instances(config: AegisConfig) -> None:
 
     processes = []
     endpoints = []
+    tmp_files = []
     for i in range(config.instances):
         port = config.port_start + i
         start_node = i * nodes_per_instance
@@ -193,6 +194,7 @@ def launch_instances(config: AegisConfig) -> None:
         script_file.write(script_content)
         script_file.close()
         os.chmod(script_file.name, 0o755)
+        tmp_files.append(script_file.name)
 
         # Build hostfile for this instance's nodes
         hostfile = tempfile.NamedTemporaryFile(
@@ -202,6 +204,7 @@ def launch_instances(config: AegisConfig) -> None:
         for node in instance_nodes:
             hostfile.write(f"{node}\n")
         hostfile.close()
+        tmp_files.append(hostfile.name)
 
         print(
             f"Launching instance {i}: nodes={instance_nodes}, port={port}",
@@ -223,5 +226,8 @@ def launch_instances(config: AegisConfig) -> None:
     print(f"All {config.instances} instance(s) launched. Waiting for health checks...", file=sys.stderr)
 
     _wait_for_instances(endpoints)
+
+    for path in tmp_files:
+        os.unlink(path)
 
     print(f"All {config.instances} instance(s) are healthy.", file=sys.stderr)
