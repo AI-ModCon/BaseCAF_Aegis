@@ -94,8 +94,8 @@ src/aegis/
 
 Reference documentation for manual setup on each platform:
 
-- [Aurora](Aurora/README.md) — Intel Data Center GPU Max, PBS
-- [Frontier](Frontier/README.md) — AMD Instinct MI250X, Slurm
+- [Aurora](docs/Aurora/README.md) — Intel Data Center GPU Max, PBS
+- [Frontier](docs/Frontier/README.md) — AMD Instinct MI250X, Slurm
 
 ## Tools
 
