@@ -14,8 +14,15 @@ fi
 PID=$(cat "$PID_FILE")
 echo "$(date) Stopping Redis server (PID: $PID)"
 
+# Locate redis-cli: prefer REDIS_STABLE if set, otherwise fall back to PATH
+if [ -n "${REDIS_STABLE}" ] && [ -x "${REDIS_STABLE}/src/redis-cli" ]; then
+    REDIS_CLI="${REDIS_STABLE}/src/redis-cli"
+else
+    REDIS_CLI="$(command -v redis-cli 2>/dev/null)"
+fi
+
 # Try graceful shutdown first
-${REDIS_STABLE}/src/redis-cli shutdown 2>/dev/null || kill -TERM $PID
+${REDIS_CLI:-redis-cli} shutdown 2>/dev/null || kill -TERM $PID
 
 # Wait for shutdown
 for i in {1..10}; do

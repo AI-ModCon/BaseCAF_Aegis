@@ -20,9 +20,21 @@ echo "$(date) Starting Redis server"
 echo "$(date)   Bind address: ${BIND_ADDRESS}"
 echo "$(date)   Port: ${REDIS_PORT}"
 
+# Locate redis-server: prefer REDIS_STABLE if set, otherwise fall back to PATH
+if [ -n "${REDIS_STABLE}" ] && [ -x "${REDIS_STABLE}/src/redis-server" ]; then
+    REDIS_SERVER="${REDIS_STABLE}/src/redis-server"
+    REDIS_CONF="${REDIS_STABLE}/redis.conf"
+else
+    REDIS_SERVER="$(command -v redis-server 2>/dev/null)"
+    REDIS_CONF=""
+    if [ -z "$REDIS_SERVER" ]; then
+        echo "$(date) ERROR: redis-server not found. Set REDIS_STABLE or add redis-server to PATH."
+        exit 1
+    fi
+fi
+
 # Start Redis with command-line overrides
-# This overrides the config file settings
-${REDIS_STABLE}/src/redis-server ${REDIS_STABLE}/redis.conf \
+${REDIS_SERVER} ${REDIS_CONF} \
     --bind ${BIND_ADDRESS} \
     --port ${REDIS_PORT} \
     --protected-mode no \
