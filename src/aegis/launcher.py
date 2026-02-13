@@ -384,23 +384,23 @@ def launch_instances(config: AegisConfig) -> None:
     _update_instances_status(endpoints, redis_host, config.redis_port,
                              ServiceStatus.HEALTHY)
 
-    # Spawn a background heartbeat monitor on each instance's node.
-    # The remote command must be fully detached (nohup + &, all I/O redirected)
-    # so that SSH exits immediately instead of lingering on the launch node.
+    # Spawn a single heartbeat monitor on the head node that watches all
+    # instances.  This replaces the previous per-node SSH approach and avoids
+    # N SSH calls / N long-running remote processes.
+    heartbeat_args = [
+        sys.executable, "-m", "aegis.heartbeat",
+        "--all", redis_host, str(config.redis_port),
+    ]
     for node, port in endpoints:
-        service_id = f"vllm-{node}-{port}"
-        remote_cmd = (
-            f"nohup {sys.executable} -m aegis.heartbeat"
-            f" {service_id} {node} {port} {redis_host} {config.redis_port}"
-            f" </dev/null >/dev/null 2>&1 &"
-        )
-        subprocess.Popen(
-            ["ssh", node, remote_cmd],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        print(f"Started heartbeat monitor for {service_id} on {node}", file=sys.stderr)
+        heartbeat_args.append(f"vllm-{node}-{port}:{node}:{port}")
+
+    subprocess.Popen(
+        heartbeat_args,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    print(f"Started heartbeat monitor for {len(endpoints)} instance(s)", file=sys.stderr)
 
     print(f"All {total_instances} instance(s) are healthy.", file=sys.stderr)
     print(f"Redis service registry: {redis_host}:{config.redis_port}", file=sys.stderr)
