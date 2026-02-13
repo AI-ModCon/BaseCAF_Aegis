@@ -84,8 +84,11 @@ def cmd_launch(args) -> None:
         print("Error: --model is required (or provide a 'models' list in the config file).", file=sys.stderr)
         sys.exit(1)
 
-    stage_conda_env(config)
-    stage_weights(config)
+    if not args.skip_staging:
+        stage_conda_env(config)
+        stage_weights(config)
+    else:
+        print("Skipping conda env and weight staging (--skip-staging)", file=sys.stderr)
     launch_instances(config)
 
 
@@ -112,6 +115,10 @@ def main(argv: list[str] | None = None) -> None:
         "launch", help="Launch vLLM instances inside an existing allocation",
     )
     _add_common_args(launch_parser)
+    launch_parser.add_argument(
+        "--skip-staging", action="store_true", dest="skip_staging",
+        help="Skip conda env and weight staging (use when already staged)",
+    )
     launch_parser.set_defaults(func=cmd_launch)
 
     args = parser.parse_args(argv)
