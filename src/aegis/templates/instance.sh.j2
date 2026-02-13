@@ -10,6 +10,7 @@ export no_proxy=localhost,127.0.0.1
 mkdir -p /tmp/conda_env && tar -xzf /tmp/{{ conda_env.split('/')[-1] }} -C /tmp/conda_env
 source /tmp/conda_env/bin/activate
 conda-unpack
+export ZE_FLAT_DEVICE_HIERARCHY=FLAT
 {% else %}
 module load frameworks
 {% endif %}
