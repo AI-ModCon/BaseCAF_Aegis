@@ -9,6 +9,7 @@ export no_proxy=localhost,127.0.0.1
 {% if conda_env %}
 mkdir -p /tmp/conda_env && tar -xzf /tmp/{{ conda_env.split('/')[-1] }} -C /tmp/conda_env
 source /tmp/conda_env/bin/activate
+conda-unpack
 {% else %}
 module load frameworks
 {% endif %}
