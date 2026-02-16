@@ -304,5 +304,12 @@ def launch_instances(config: AegisConfig) -> None:
     # The heartbeat loop will naturally transition instances from STARTING to
     # HEALTHY once their /health endpoints respond 200 — no separate update needed.
 
+    # Write an endpoints file so users/scripts can discover healthy instances.
+    endpoints_file = Path("aegis_endpoints.txt")
+    with open(endpoints_file, "w") as f:
+        for node, port in endpoints:
+            f.write(f"{node}:{port}\n")
+
     print(f"All {total_instances} instance(s) are healthy.", file=sys.stderr)
+    print(f"Endpoints written to {endpoints_file.resolve()}", file=sys.stderr)
     print(f"Service registry: http://{head_node}:{config.registry_port}", file=sys.stderr)
