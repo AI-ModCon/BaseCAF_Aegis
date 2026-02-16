@@ -44,20 +44,33 @@ def _get_allocated_nodes() -> list[str]:
     return nodes
 
 
-def stage_conda_env(config: AegisConfig) -> None:
-    """Compile bcast (if needed) and broadcast a conda-pack tarball to all nodes."""
-    if not config.conda_env:
-        return
-
+def _ensure_bcast() -> Path:
+    """Compile bcast if the binary is missing or the source is newer."""
     tools_dir = _project_root() / "tools"
     bcast_bin = tools_dir / "bcast"
+    bcast_src = tools_dir / "bcast.c"
 
-    if not bcast_bin.exists():
+    needs_build = (
+        not bcast_bin.exists()
+        or (bcast_src.exists() and bcast_src.stat().st_mtime > bcast_bin.stat().st_mtime)
+    )
+
+    if needs_build:
         print("Compiling bcast...", file=sys.stderr)
         result = subprocess.run(["make", "bcast"], cwd=tools_dir)
         if result.returncode != 0:
             print("Failed to compile bcast.", file=sys.stderr)
             sys.exit(1)
+
+    return bcast_bin
+
+
+def stage_conda_env(config: AegisConfig) -> None:
+    """Compile bcast (if needed) and broadcast a conda-pack tarball to all nodes."""
+    if not config.conda_env:
+        return
+
+    bcast_bin = _ensure_bcast()
 
     tarball = config.conda_env
     print(f"Staging conda env: {tarball} -> /tmp", file=sys.stderr)
@@ -110,15 +123,7 @@ def stage_weights(config: AegisConfig) -> None:
         print("No model_source specified, skipping weight staging.", file=sys.stderr)
         return
 
-    tools_dir = _project_root() / "tools"
-    bcast_bin = tools_dir / "bcast"
-
-    if not bcast_bin.exists():
-        print("Compiling bcast...", file=sys.stderr)
-        result = subprocess.run(["make", "bcast"], cwd=tools_dir)
-        if result.returncode != 0:
-            print("Failed to compile bcast.", file=sys.stderr)
-            sys.exit(1)
+    bcast_bin = _ensure_bcast()
 
     dest = f"{config.hf_home}/hub"
     env = os.environ.copy()

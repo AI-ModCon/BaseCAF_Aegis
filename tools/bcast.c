@@ -28,10 +28,7 @@ int main(int argc, char **argv) {
 
     clock_gettime(CLOCK_MONOTONIC, &start);
 
-    MPI_Init(NULL, NULL);
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-    /* Parse optional --no-root-write flag (can appear anywhere). */
+    /* Parse args BEFORE MPI_Init — some implementations rewrite argv. */
     int positional[2];
     int npos = 0;
     for (int i = 1; i < argc; i++) {
@@ -43,16 +40,19 @@ int main(int argc, char **argv) {
         }
     }
 
+    /* Copy positional args into local strings so we no longer depend on argv. */
+    char *srcpath = (npos >= 1) ? strdup(argv[positional[0]]) : NULL;
+    char *destpath = (npos >= 2) ? strdup(argv[positional[1]]) : strdup("/tmp");
+    destdir = destpath;
+
+    MPI_Init(NULL, NULL);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
     if (npos < 1) {
         if (rank == 0) fprintf(stderr, "Usage: bcast [--no-root-write] <src> [dest]\n");
         MPI_Finalize();
         return 1;
     }
-
-    /* Copy positional args into local strings so we no longer depend on argv. */
-    char *srcpath = strdup(argv[positional[0]]);
-    char *destpath = (npos < 2) ? strdup("/tmp") : strdup(argv[positional[1]]);
-    destdir = destpath;
 
     FILE *archive = NULL;
 
