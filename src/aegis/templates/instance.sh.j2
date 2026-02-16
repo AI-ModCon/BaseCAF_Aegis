@@ -11,6 +11,10 @@ mkdir -p /tmp/conda_env && tar -xzf /tmp/{{ conda_env.split('/')[-1] }} -C /tmp/
 source /tmp/conda_env/bin/activate
 conda-unpack
 export ZE_FLAT_DEVICE_HIERARCHY=FLAT
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export FI_MR_CACHE_MONITOR=userfaultfd
+export TORCH_COMPILE_DISABLE=1
+export OMP_NUM_THREADS=52
 {% else %}
 module load frameworks
 {% endif %}
