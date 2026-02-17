@@ -38,6 +38,7 @@ export HF_HOME="{{ hf_home }}"
 vllm serve {{ model }} \
     --tensor-parallel-size {{ tensor_parallel_size }} \
     --port {{ port }} \
+    --enforce-eager \
 {% for arg in extra_vllm_args %}    {{ arg }} \
 {% endfor %}
 
