@@ -150,7 +150,7 @@ def stage_weights(config: AegisConfig) -> None:
 def _wait_for_instances(
     endpoints: list[tuple[str, int]],
     poll_interval: int = 10,
-    timeout: int = 1200,
+    timeout: int = 1800,
 ) -> None:
     """Poll /health on each instance until all respond 200 or timeout expires."""
     # Bypass http_proxy env vars — health checks target internal compute nodes.
