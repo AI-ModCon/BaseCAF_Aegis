@@ -395,6 +395,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#-wait" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --wait
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#-remote" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --remote
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#common-flags-shared-with-launch" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -766,6 +788,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#-wait" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --wait
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#-remote" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --remote
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#common-flags-shared-with-launch" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -912,16 +956,46 @@
 <thead>
 <tr>
 <th>Flag</th>
+<th>Type</th>
 <th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>--dry-run</code></td>
+<td>flag</td>
 <td>Print the generated PBS script without submitting</td>
+</tr>
+<tr>
+<td><code>--aegis-env</code></td>
+<td><code>str</code></td>
+<td>Path to a conda environment containing the aegis package</td>
+</tr>
+<tr>
+<td><code>--wait</code></td>
+<td>flag</td>
+<td>Block until instances are healthy and the endpoints file is written</td>
+</tr>
+<tr>
+<td><code>--remote</code></td>
+<td><code>str</code></td>
+<td>Submit via SSH to a remote login node (e.g., <code>user@aurora.alcf.anl.gov</code>)</td>
 </tr>
 </tbody>
 </table>
+<h3 id="-wait"><code>--wait</code></h3>
+<p>By default <code>aegis submit</code> exits immediately after <code>qsub</code> succeeds. Pass <code>--wait</code> to block until the endpoints file appears:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>aegis<span class="w"> </span>submit<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--wait
+</code></pre></div>
+<p>The command polls the PBS job with <code>qstat</code> and watches for the configured <code>endpoints_file</code>. Once the file is found and non-empty the endpoints are printed to stdout and the command exits. If the job terminates before the file appears, an error is printed and the command exits with code 1.</p>
+<h3 id="-remote"><code>--remote</code></h3>
+<p>Run <code>aegis submit</code> from a machine that does not have <code>qsub</code> available (e.g., your laptop) by tunnelling commands over SSH:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>aegis<span class="w"> </span>submit<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--remote<span class="w"> </span>user@aurora.alcf.anl.gov
+</code></pre></div>
+<p>ALCF login nodes require a one-time password (OTP). Aegis opens an SSH <code>ControlMaster</code> session that prompts once for the OTP and reuses the connection for all subsequent operations (file copy, <code>qsub</code>, polling). The control socket is cleaned up on exit.</p>
+<p>Combine with <code>--wait</code> to submit remotely and block until endpoints are ready. The endpoints file is automatically copied to the current working directory:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>aegis<span class="w"> </span>submit<span class="w"> </span>--config<span class="w"> </span>config.yaml<span class="w"> </span>--remote<span class="w"> </span>user@aurora.alcf.anl.gov<span class="w"> </span>--wait
+</code></pre></div>
 <h3 id="common-flags-shared-with-launch">Common flags (shared with <code>launch</code>)</h3>
 <table>
 <thead>
@@ -1026,7 +1100,7 @@
 </table>
 <h2 id="aegis-launch"><code>aegis launch</code></h2>
 <p>Launch vLLM instances inside an existing PBS allocation. Stages model weights and starts <code>vllm serve</code> processes on assigned nodes.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>aegis<span class="w"> </span>launch<span class="w"> </span>--config<span class="w"> </span>config.yaml
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>aegis<span class="w"> </span>launch<span class="w"> </span>--config<span class="w"> </span>config.yaml
 </code></pre></div>
 <h3 id="launch-specific-flags">Launch-specific flags</h3>
 <table>
@@ -1079,7 +1153,7 @@
 </table>
 <h3 id="aegis-registry-list"><code>aegis registry list</code></h3>
 <p>List all registered services.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>aegis<span class="w"> </span>registry<span class="w"> </span>list<span class="w"> </span><span class="o">[</span>--type<span class="w"> </span>TYPE<span class="o">]</span><span class="w"> </span><span class="o">[</span>--status<span class="w"> </span>STATUS<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>aegis<span class="w"> </span>registry<span class="w"> </span>list<span class="w"> </span><span class="o">[</span>--type<span class="w"> </span>TYPE<span class="o">]</span><span class="w"> </span><span class="o">[</span>--status<span class="w"> </span>STATUS<span class="o">]</span>
 </code></pre></div>
 <table>
 <thead>
@@ -1104,11 +1178,11 @@
 </table>
 <h3 id="aegis-registry-get"><code>aegis registry get</code></h3>
 <p>Get a single service by ID.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>aegis<span class="w"> </span>registry<span class="w"> </span>get<span class="w"> </span>SERVICE_ID
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>aegis<span class="w"> </span>registry<span class="w"> </span>get<span class="w"> </span>SERVICE_ID
 </code></pre></div>
 <h3 id="aegis-registry-list-healthy"><code>aegis registry list-healthy</code></h3>
 <p>List services that are currently healthy (recent heartbeat).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>aegis<span class="w"> </span>registry<span class="w"> </span>list-healthy<span class="w"> </span><span class="o">[</span>--type<span class="w"> </span>TYPE<span class="o">]</span><span class="w"> </span><span class="o">[</span>--timeout<span class="w"> </span>SECONDS<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>aegis<span class="w"> </span>registry<span class="w"> </span>list-healthy<span class="w"> </span><span class="o">[</span>--type<span class="w"> </span>TYPE<span class="o">]</span><span class="w"> </span><span class="o">[</span>--timeout<span class="w"> </span>SECONDS<span class="o">]</span>
 </code></pre></div>
 <table>
 <thead>
@@ -1136,7 +1210,7 @@
 </table>
 <h3 id="aegis-registry-count"><code>aegis registry count</code></h3>
 <p>Count registered services.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>aegis<span class="w"> </span>registry<span class="w"> </span>count<span class="w"> </span><span class="o">[</span>--type<span class="w"> </span>TYPE<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>aegis<span class="w"> </span>registry<span class="w"> </span>count<span class="w"> </span><span class="o">[</span>--type<span class="w"> </span>TYPE<span class="o">]</span>
 </code></pre></div>
 <table>
 <thead>
