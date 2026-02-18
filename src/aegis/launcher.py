@@ -150,9 +150,12 @@ def stage_weights(config: AegisConfig) -> None:
 def _wait_for_instances(
     endpoints: list[tuple[str, int]],
     poll_interval: int = 10,
-    timeout: int = 1800,
-) -> None:
-    """Poll /health on each instance until all respond 200 or timeout expires."""
+    timeout: int = 600,
+) -> list[tuple[str, int]]:
+    """Poll /health on each instance until all respond 200 or timeout expires.
+
+    Returns the list of endpoints that became healthy within the timeout.
+    """
     # Bypass http_proxy env vars — health checks target internal compute nodes.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     ready = set()
@@ -182,17 +185,19 @@ def _wait_for_instances(
                 )
 
         if len(ready) == len(endpoints):
-            return
+            break
 
         time.sleep(poll_interval)
 
     not_ready = [(n, p) for n, p in endpoints if (n, p) not in ready]
-    print(
-        f"Error: Timed out after {timeout}s waiting for instances: "
-        + ", ".join(f"{n}:{p}" for n, p in not_ready),
-        file=sys.stderr,
-    )
-    sys.exit(1)
+    if not_ready:
+        print(
+            f"Warning: Timed out after {timeout}s waiting for instances: "
+            + ", ".join(f"{n}:{p}" for n, p in not_ready),
+            file=sys.stderr,
+        )
+
+    return [(n, p) for n, p in endpoints if (n, p) in ready]
 
 
 def launch_instances(config: AegisConfig) -> None:
@@ -307,20 +312,27 @@ def launch_instances(config: AegisConfig) -> None:
     print(f"Started heartbeat monitor for {len(endpoints)} instance(s)", file=sys.stderr)
     print(f"Logs: {log_dir}", file=sys.stderr)
 
-    _wait_for_instances(endpoints)
+    healthy = _wait_for_instances(endpoints)
 
     for path in tmp_files:
         os.unlink(path)
 
+    if not healthy:
+        print("Error: No instances became healthy.", file=sys.stderr)
+        sys.exit(1)
+
     # The heartbeat loop will naturally transition instances from STARTING to
     # HEALTHY once their /health endpoints respond 200 — no separate update needed.
 
-    # Write an endpoints file so users/scripts can discover healthy instances.
+    # Write an endpoints file with only the healthy instances.
     endpoints_file = Path("aegis_endpoints.txt")
     with open(endpoints_file, "w") as f:
-        for node, port in endpoints:
+        for node, port in healthy:
             f.write(f"{node}:{port}\n")
 
-    print(f"All {total_instances} instance(s) are healthy.", file=sys.stderr)
+    print(
+        f"{len(healthy)}/{total_instances} instance(s) are healthy.",
+        file=sys.stderr,
+    )
     print(f"Endpoints written to {endpoints_file.resolve()}", file=sys.stderr)
     print(f"Service registry: http://{head_node}:{config.registry_port}", file=sys.stderr)
