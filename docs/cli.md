@@ -16,6 +16,34 @@ aegis submit --config config.yaml
 |------|------|-------------|
 | `--dry-run` | flag | Print the generated PBS script without submitting |
 | `--aegis-env` | `str` | Path to a conda environment containing the aegis package |
+| `--wait` | flag | Block until instances are healthy and the endpoints file is written |
+| `--remote` | `str` | Submit via SSH to a remote login node (e.g., `user@aurora.alcf.anl.gov`) |
+
+### `--wait`
+
+By default `aegis submit` exits immediately after `qsub` succeeds. Pass `--wait` to block until the endpoints file appears:
+
+```bash
+aegis submit --config config.yaml --wait
+```
+
+The command polls the PBS job with `qstat` and watches for the configured `endpoints_file`. Once the file is found and non-empty the endpoints are printed to stdout and the command exits. If the job terminates before the file appears, an error is printed and the command exits with code 1.
+
+### `--remote`
+
+Run `aegis submit` from a machine that does not have `qsub` available (e.g., your laptop) by tunnelling commands over SSH:
+
+```bash
+aegis submit --config config.yaml --remote user@aurora.alcf.anl.gov
+```
+
+ALCF login nodes require a one-time password (OTP). Aegis opens an SSH `ControlMaster` session that prompts once for the OTP and reuses the connection for all subsequent operations (file copy, `qsub`, polling). The control socket is cleaned up on exit.
+
+Combine with `--wait` to submit remotely and block until endpoints are ready:
+
+```bash
+aegis submit --config config.yaml --remote user@aurora.alcf.anl.gov --wait
+```
 
 ### Common flags (shared with `launch`)
 

@@ -8,7 +8,13 @@ import sys
 from .config import AegisConfig, load_config, merge_cli_args, _normalize_models
 from .launcher import launch_instances, stage_conda_env, stage_weights
 from .registry import ServiceRegistryClient, ServiceStatus
-from .scheduler import generate_pbs_script, submit_job
+from .scheduler import (
+    SSHConnection,
+    generate_pbs_script,
+    submit_job,
+    submit_job_remote,
+    wait_for_endpoints,
+)
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -124,7 +130,22 @@ def cmd_submit(args) -> None:
         print(script)
         return
 
-    submit_job(script)
+    ssh = None
+    if args.remote:
+        ssh = SSHConnection(args.remote)
+        ssh.connect()
+
+    try:
+        if ssh:
+            job_id = submit_job_remote(script, ssh)
+        else:
+            job_id = submit_job(script)
+
+        if args.wait:
+            wait_for_endpoints(config.endpoints_file, job_id, ssh=ssh)
+    finally:
+        if ssh:
+            ssh.close()
 
 
 def cmd_launch(args) -> None:
@@ -230,6 +251,14 @@ def main(argv: list[str] | None = None) -> None:
     submit_parser.add_argument(
         "--aegis-env", type=str, dest="aegis_env",
         help="Path to a conda environment containing the aegis package",
+    )
+    submit_parser.add_argument(
+        "--wait", action="store_true",
+        help="Block until instances are healthy and the endpoints file is written",
+    )
+    submit_parser.add_argument(
+        "--remote", type=str, metavar="USER@HOST",
+        help="Submit via SSH to a remote login node (e.g., user@aurora.alcf.anl.gov)",
     )
     submit_parser.set_defaults(func=cmd_submit)
 
