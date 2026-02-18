@@ -8,7 +8,7 @@
 #PBS -q {{ config.queue }}
 {% endif -%}
 #PBS -o aegis_output.log
-#PBS -e aegis_error.log
+#PBS -j oe
 
 {% if config.aegis_env %}
 module load miniforge3
