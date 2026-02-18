@@ -12,6 +12,7 @@
 
 {% if config.aegis_env %}
 module load miniforge3
+eval "$(conda shell.bash hook)"
 conda activate {{ config.aegis_env }}
 {% endif %}
 {% if not config.conda_env %}
