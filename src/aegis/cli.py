@@ -50,6 +50,10 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
         "--conda-env", type=str, dest="conda_env",
         help="Path to a conda-pack tarball to distribute and activate on all nodes",
     )
+    parser.add_argument(
+        "--startup-timeout", type=int, dest="startup_timeout",
+        help="Seconds to wait for instances to become healthy (default: 600)",
+    )
 
 
 def _build_config(args) -> AegisConfig:

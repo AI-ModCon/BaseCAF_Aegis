@@ -50,6 +50,9 @@ class AegisConfig:
     # In-process service registry (HTTP API port)
     registry_port: int = 8471
 
+    # Startup timeout (seconds) for instances to become healthy
+    startup_timeout: int = 600
+
     # Multi-model list
     models: list[ModelConfig] = field(default_factory=list)
 

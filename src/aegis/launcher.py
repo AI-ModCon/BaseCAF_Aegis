@@ -312,7 +312,7 @@ def launch_instances(config: AegisConfig) -> None:
     print(f"Started heartbeat monitor for {len(endpoints)} instance(s)", file=sys.stderr)
     print(f"Logs: {log_dir}", file=sys.stderr)
 
-    healthy = _wait_for_instances(endpoints)
+    healthy = _wait_for_instances(endpoints, timeout=config.startup_timeout)
 
     for path in tmp_files:
         os.unlink(path)
