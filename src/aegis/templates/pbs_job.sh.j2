@@ -20,6 +20,12 @@ module load frameworks
 {% endif %}
 export TMPDIR=/tmp
 
+if ! command -v aegis &>/dev/null; then
+    echo "Error: 'aegis' command not found in the job environment." >&2
+    echo "Add 'aegis_env: /path/to/conda/env' to your config YAML to specify a conda environment containing aegis." >&2
+    exit 1
+fi
+
 export HTTP_PROXY=http://proxy.alcf.anl.gov:3128
 export HTTPS_PROXY=http://proxy.alcf.anl.gov:3128
 export http_proxy=http://proxy.alcf.anl.gov:3128
