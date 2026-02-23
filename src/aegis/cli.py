@@ -137,12 +137,14 @@ def cmd_submit(args) -> None:
         ssh.connect()
 
     try:
-        # Remove stale endpoints file so --wait doesn't find it immediately
+        # Remove stale endpoints and registry files so --wait doesn't find them immediately
         if args.wait:
+            registry_file = str(Path(config.endpoints_file).parent / "aegis_registry_url.txt")
             if ssh:
-                ssh.run(f"rm -f {config.endpoints_file}")
+                ssh.run(f"rm -f {config.endpoints_file} {registry_file}")
             else:
                 Path(config.endpoints_file).unlink(missing_ok=True)
+                Path(registry_file).unlink(missing_ok=True)
 
         if ssh:
             job_id = submit_job_remote(script, ssh)
@@ -228,11 +230,11 @@ def _add_registry_args(parser: argparse.ArgumentParser) -> None:
     """Add --registry-host and --registry-port to a registry sub-parser."""
     parser.add_argument(
         "--registry-host", type=str, default="localhost",
-        help="Registry server host (default: localhost)",
+        help="Hostname of the registry server, typically the first PBS node (default: localhost)",
     )
     parser.add_argument(
         "--registry-port", type=int, default=8471,
-        help="Registry server port (default: 8471)",
+        help="Port of the registry HTTP API (default: 8471)",
     )
     parser.add_argument(
         "--format", choices=["text", "json"], default="text",

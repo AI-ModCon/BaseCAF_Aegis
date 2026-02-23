@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from jinja2 import Environment, PackageLoader
@@ -210,6 +211,23 @@ def _read_endpoints_file(
         return None
 
 
+def _read_registry_url(
+    endpoints_file: str, ssh: SSHConnection | None = None
+) -> str | None:
+    """Read the registry URL sidecar file written by the launcher."""
+    registry_file = str(Path(endpoints_file).parent / "aegis_registry_url.txt")
+    if ssh:
+        result = ssh.run(f"test -s {registry_file} && cat {registry_file}")
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        return None
+    else:
+        path = Path(registry_file)
+        if path.is_file() and path.stat().st_size > 0:
+            return path.read_text().strip()
+        return None
+
+
 def wait_for_endpoints(
     endpoints_file: str,
     job_id: str,
@@ -247,6 +265,25 @@ def wait_for_endpoints(
             print("Endpoints:", file=sys.stderr)
             for ep in endpoints:
                 print(ep)
+
+            # Print registry URL and usage hint
+            registry_url = _read_registry_url(endpoints_file, ssh)
+            if registry_url:
+                if ssh:
+                    registry_local = Path(endpoints_file).parent / "aegis_registry_url.txt"
+                    ssh.scp_from(
+                        str(Path(endpoints_file).parent / "aegis_registry_url.txt"),
+                        str(registry_local.name),
+                    )
+                print(f"\nRegistry: {registry_url}", file=sys.stderr)
+                parsed = urlparse(registry_url)
+                print(
+                    f"  aegis registry list-healthy "
+                    f"--registry-host {parsed.hostname} "
+                    f"--registry-port {parsed.port}",
+                    file=sys.stderr,
+                )
+
             return endpoints
 
         # Check if job is still alive

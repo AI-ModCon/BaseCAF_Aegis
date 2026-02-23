@@ -330,6 +330,12 @@ def launch_instances(config: AegisConfig) -> None:
         for node, port in healthy:
             f.write(f"{node}:{port}\n")
 
+    # Write a sidecar file with the registry URL so the submit side can find it.
+    registry_url = f"http://{head_node}:{config.registry_port}"
+    registry_file = endpoints_file.parent / "aegis_registry_url.txt"
+    with open(registry_file, "w") as f:
+        f.write(registry_url + "\n")
+
     print(
         f"{len(healthy)}/{total_instances} instance(s) are healthy.",
         file=sys.stderr,
