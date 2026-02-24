@@ -371,6 +371,9 @@ def cmd_bench(args) -> None:
         host, port = ep.rsplit(":", 1)
         hosts_by_port.setdefault(port, []).append(host)
 
+    # Forward HF_TOKEN to mpiexec ranks if set in the environment
+    hf_token = os.environ.get("HF_TOKEN")
+
     # Build mpiexec command: SPMD per port group, MPMD across groups
     mpi_cmd: list[str] = ["mpiexec"]
     first = True
@@ -394,9 +397,11 @@ def cmd_bench(args) -> None:
             rank_cmd = ["bash", "-c", bash_cmd]
         else:
             rank_cmd = vllm_args
+        env_flags = ["-env", "HF_TOKEN", hf_token] if hf_token else []
         mpi_cmd.extend([
             "-n", str(len(hosts)),
             "-hosts", ",".join(hosts),
+            *env_flags,
             *rank_cmd,
         ])
 
