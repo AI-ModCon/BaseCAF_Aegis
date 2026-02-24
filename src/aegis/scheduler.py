@@ -271,6 +271,14 @@ def wait_for_endpoints(
                     file=sys.stderr,
                 )
 
+            elapsed = int(time.monotonic() - start)
+            minutes, seconds = divmod(elapsed, 60)
+            print(
+                f"\nLaunch complete ({minutes}m{seconds:02d}s). "
+                f"{len(endpoints)} endpoint(s) ready.",
+                file=sys.stderr,
+            )
+
             # Print registry URL and usage hint
             registry_url = _read_registry_url(endpoints_file, ssh)
             if registry_url:
