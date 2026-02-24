@@ -429,6 +429,64 @@ def cmd_bench(args) -> None:
         shutil.rmtree(result_dir, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# aegis shutdown subcommand
+# ---------------------------------------------------------------------------
+
+def cmd_shutdown(args) -> None:
+    """Shut down launched vLLM instances and/or cancel PBS jobs."""
+    endpoints_file = args.endpoints_file
+    job_id = args.job_id
+    has_endpoints = os.path.exists(endpoints_file)
+
+    if not has_endpoints and not job_id:
+        print(
+            f"Error: endpoints file '{endpoints_file}' not found and no --job-id provided.\n"
+            "Provide --endpoints-file pointing to a valid file and/or --job-id.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Kill vLLM processes on nodes listed in the endpoints file
+    if has_endpoints:
+        endpoints = _read_endpoints_file(endpoints_file)
+        if not endpoints:
+            print(f"Warning: no endpoints found in '{endpoints_file}', skipping process kill.", file=sys.stderr)
+        else:
+            # Extract unique hostnames from host:port lines
+            hosts = list(dict.fromkeys(ep.rsplit(":", 1)[0] for ep in endpoints))
+            hosts_str = ",".join(hosts)
+            print(f"Killing vLLM processes on: {hosts_str}")
+            result = subprocess.run(
+                ["mpiexec", "-hosts", hosts_str, "-ppn", "1", "pkill", "-f", "vllm serve"],
+            )
+            if result.returncode == 0:
+                print("vLLM processes terminated successfully.")
+            else:
+                print(f"pkill exited with code {result.returncode}", file=sys.stderr)
+
+    # Cancel the PBS job if requested
+    if job_id:
+        ssh = None
+        if args.remote:
+            ssh = SSHConnection(args.remote)
+            ssh.connect()
+        try:
+            if ssh:
+                print(f"Cancelling PBS job {job_id} via {args.remote}")
+                ssh.run(f"qdel {job_id}")
+            else:
+                print(f"Cancelling PBS job {job_id}")
+                subprocess.run(["qdel", job_id], check=True)
+            print(f"Job {job_id} cancelled.")
+        except (subprocess.CalledProcessError, RuntimeError) as exc:
+            print(f"Error cancelling job {job_id}: {exc}", file=sys.stderr)
+            sys.exit(1)
+        finally:
+            if ssh:
+                ssh.close()
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="aegis",
@@ -527,6 +585,22 @@ def main(argv: list[str] | None = None) -> None:
         help="Extra arguments passed through to vllm bench serve (put after --)",
     )
     bench_parser.set_defaults(func=cmd_bench)
+
+    # shutdown
+    shutdown_parser = subparsers.add_parser("shutdown", help="Shut down launched vLLM instances")
+    shutdown_parser.add_argument(
+        "--endpoints-file", type=str, default="aegis_endpoints.txt", dest="endpoints_file",
+        help="Path to endpoints file (default: aegis_endpoints.txt)",
+    )
+    shutdown_parser.add_argument(
+        "--job-id", type=str, dest="job_id",
+        help="PBS job ID to cancel via qdel",
+    )
+    shutdown_parser.add_argument(
+        "--remote", type=str, metavar="USER@HOST",
+        help="Run qdel via SSH on a remote login node",
+    )
+    shutdown_parser.set_defaults(func=cmd_shutdown)
 
     args = parser.parse_args(argv)
 
