@@ -1,10 +1,14 @@
 """CLI entry point for Aegis."""
 
 import argparse
+import csv
+import glob
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from .config import AegisConfig, load_config, merge_cli_args, _normalize_models
@@ -261,6 +265,76 @@ def _read_endpoints_file(path: str) -> list[str]:
     return endpoints
 
 
+_BENCH_METRICS = [
+    "request_throughput", "output_throughput_tok_s", "total_token_throughput",
+    "mean_ttft_ms", "median_ttft_ms", "p99_ttft_ms",
+    "mean_tpot_ms", "median_tpot_ms", "p99_tpot_ms",
+    "mean_itl_ms", "median_itl_ms", "p99_itl_ms",
+    "duration", "completed", "total_input_tokens", "total_output_tokens",
+]
+
+
+def _parse_bench_results(result_dir: str) -> list[dict]:
+    """Parse JSON result files produced by vllm bench serve."""
+    results = []
+    for path in sorted(glob.glob(os.path.join(result_dir, "*.json"))):
+        with open(path) as f:
+            data = json.load(f)
+        row: dict = {}
+        # Identify endpoint from the base_url stored in the JSON
+        base_url = data.get("base_url", "")
+        if base_url:
+            # Strip scheme and /v1 suffix to get host:port
+            endpoint = base_url.replace("http://", "").replace("https://", "").rstrip("/")
+            if endpoint.endswith("/v1"):
+                endpoint = endpoint[:-3]
+            row["endpoint"] = endpoint
+        else:
+            row["endpoint"] = Path(path).stem
+        for key in _BENCH_METRICS:
+            if key in data:
+                row[key] = data[key]
+        results.append(row)
+    return results
+
+
+def _write_bench_csv(results: list[dict], output_path: str | None = None) -> None:
+    """Write benchmark results as CSV with a summary row."""
+    if not results:
+        return
+    columns = list(results[0].keys())
+    # Ensure consistent column order across all rows
+    for r in results[1:]:
+        for k in r:
+            if k not in columns:
+                columns.append(k)
+
+    numeric_cols = [c for c in columns if c != "endpoint"]
+
+    # Compute summary row
+    summary: dict = {"endpoint": "SUMMARY"}
+    for col in numeric_cols:
+        vals = [r[col] for r in results if col in r and isinstance(r[col], (int, float))]
+        if vals:
+            mn, mx, avg = min(vals), max(vals), sum(vals) / len(vals)
+            summary[col] = f"min={mn:.2f} max={mx:.2f} mean={avg:.2f}"
+
+    if output_path:
+        fh = open(output_path, "w", newline="")
+    else:
+        fh = sys.stdout
+
+    try:
+        writer = csv.DictWriter(fh, fieldnames=columns, extrasaction="ignore")
+        writer.writeheader()
+        for r in results:
+            writer.writerow(r)
+        writer.writerow(summary)
+    finally:
+        if output_path:
+            fh.close()
+
+
 def cmd_bench(args) -> None:
     """Benchmark launched vLLM instances via vllm bench serve."""
     # Resolve endpoints
@@ -286,6 +360,9 @@ def cmd_bench(args) -> None:
     if extra and extra[0] == "--":
         extra = extra[1:]
 
+    # Create temp directory for JSON result files
+    result_dir = tempfile.mkdtemp(prefix="aegis_bench_")
+
     # Group endpoints by port — endpoints sharing a port get a single SPMD
     # segment; differing ports require separate MPMD segments.
     hosts_by_port: dict[str, list[str]] = {}
@@ -308,6 +385,7 @@ def cmd_bench(args) -> None:
             "--model", args.model,
             "--num-prompts", str(args.num_prompts),
             "--base-url", base_url,
+            "--save-result-dir", result_dir,
             *extra,
         ])
 
@@ -315,10 +393,23 @@ def cmd_bench(args) -> None:
     for ep in endpoints:
         print(f"  {ep}")
 
-    proc = subprocess.run(mpi_cmd)
-    if proc.returncode != 0:
-        print(f"\nmpiexec exited with code {proc.returncode}", file=sys.stderr)
-        sys.exit(proc.returncode)
+    try:
+        proc = subprocess.run(mpi_cmd)
+        if proc.returncode != 0:
+            print(f"\nmpiexec exited with code {proc.returncode}", file=sys.stderr)
+            sys.exit(proc.returncode)
+
+        # Post-process results into CSV
+        results = _parse_bench_results(result_dir)
+        if results:
+            output_path = getattr(args, "output", None)
+            _write_bench_csv(results, output_path)
+            if output_path:
+                print(f"\nResults written to {output_path}")
+        else:
+            print("Warning: no benchmark result files found.", file=sys.stderr)
+    finally:
+        shutil.rmtree(result_dir, ignore_errors=True)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -404,6 +495,10 @@ def main(argv: list[str] | None = None) -> None:
     bench_parser.add_argument(
         "--endpoints-file", type=str, default="aegis_endpoints.txt", dest="endpoints_file",
         help="Path to endpoints file (default: aegis_endpoints.txt)",
+    )
+    bench_parser.add_argument(
+        "--output", type=str, default=None,
+        help="Path to write CSV results (default: print to stdout)",
     )
     _add_registry_args(bench_parser)
     bench_parser.add_argument(
