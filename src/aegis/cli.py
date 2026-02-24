@@ -5,6 +5,7 @@ import csv
 import glob
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -378,15 +379,24 @@ def cmd_bench(args) -> None:
             mpi_cmd.append(":")
         first = False
         base_url = f"http://localhost:{port}/v1"
-        mpi_cmd.extend([
-            "-n", str(len(hosts)),
-            "-hosts", ",".join(hosts),
+        vllm_args = [
             "vllm", "bench", "serve",
             "--model", args.model,
             "--num-prompts", str(args.num_prompts),
             "--base-url", base_url,
             "--save-result-dir", result_dir,
             *extra,
+        ]
+        if args.conda_env:
+            activate = f"source {args.conda_env}/bin/activate"
+            bash_cmd = f"{activate} && {shlex.join(vllm_args)}"
+            rank_cmd = ["bash", "-c", bash_cmd]
+        else:
+            rank_cmd = vllm_args
+        mpi_cmd.extend([
+            "-n", str(len(hosts)),
+            "-hosts", ",".join(hosts),
+            *rank_cmd,
         ])
 
     print(f"Launching benchmarks on {len(endpoints)} endpoint(s) via mpiexec")
@@ -499,6 +509,10 @@ def main(argv: list[str] | None = None) -> None:
     bench_parser.add_argument(
         "--output", type=str, default=None,
         help="Path to write CSV results (default: print to stdout)",
+    )
+    bench_parser.add_argument(
+        "--conda-env", type=str, default=None, dest="conda_env",
+        help="Path to staged conda environment directory (default: /tmp/conda_env)",
     )
     _add_registry_args(bench_parser)
     bench_parser.add_argument(
