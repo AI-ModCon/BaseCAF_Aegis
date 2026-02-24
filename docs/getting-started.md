@@ -92,6 +92,40 @@ aegis registry list
 aegis registry list-healthy
 ```
 
+### 6. Benchmark running instances
+
+Once instances are running, benchmark them:
+
+```bash
+aegis bench --model meta-llama/Llama-3.3-70B-Instruct
+```
+
+This runs `vllm bench serve` in parallel across all endpoints listed in `aegis_endpoints.txt` and prints a CSV summary. Write results to a file with `--output`:
+
+```bash
+aegis bench --model meta-llama/Llama-3.3-70B-Instruct --output results.csv
+```
+
+### 7. Shut down instances
+
+When you're done, shut down the vLLM processes:
+
+```bash
+aegis shutdown
+```
+
+This reads `aegis_endpoints.txt` to find the nodes and kills vLLM processes on each one. To also cancel the PBS job:
+
+```bash
+aegis shutdown --job-id 12345.aurora-pbs-0001
+```
+
+If you submitted remotely, cancel the job via SSH:
+
+```bash
+aegis shutdown --job-id 12345.aurora-pbs-0001 --remote user@aurora.alcf.anl.gov
+```
+
 ## Staging a Conda Environment
 
 If your compute nodes don't have vLLM pre-installed, you can distribute a custom conda environment to all nodes using [conda-pack](https://conda.github.io/conda-pack/). First, create a tarball from an existing conda environment:

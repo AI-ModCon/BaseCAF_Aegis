@@ -20,6 +20,8 @@ pip install -e .
 
 1. **`aegis submit`** renders a PBS batch script from a Jinja2 template and submits it via `qsub`. The generated job script calls `aegis launch` inside the allocation.
 2. **`aegis launch`** runs inside a PBS allocation. It optionally stages model weights to local storage using MPI broadcast, then launches one `vllm serve` process per instance on the assigned nodes.
+3. **`aegis bench`** benchmarks running instances in parallel via `mpiexec` and aggregates results into CSV.
+4. **`aegis shutdown`** tears down instances by killing vLLM processes on nodes and/or cancelling PBS jobs.
 
 ## Architecture
 

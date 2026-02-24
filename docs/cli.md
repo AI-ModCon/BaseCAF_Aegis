@@ -1,6 +1,6 @@
 # CLI Reference
 
-Aegis provides three subcommands: `submit`, `launch`, and `registry`.
+Aegis provides five subcommands: `submit`, `launch`, `registry`, `bench`, and `shutdown`.
 
 ## `aegis submit`
 
@@ -141,3 +141,94 @@ aegis registry count [--type TYPE]
 | Flag | Type | Description |
 |------|------|-------------|
 | `--type` | `str` | Filter by service type |
+
+## `aegis bench`
+
+Benchmark launched vLLM instances using `vllm bench serve`. Aegis runs benchmarks in parallel across all endpoints via `mpiexec`, then aggregates results into a CSV summary.
+
+```bash
+aegis bench --model meta-llama/Llama-3.3-70B-Instruct
+```
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--model` | `str` | *required* | Model name for the benchmark |
+| `--num-prompts` | `int` | `100` | Number of prompts per endpoint |
+| `--endpoints-file` | `str` | `aegis_endpoints.txt` | Path to endpoints file |
+| `--output` | `str` | stdout | Path to write CSV results |
+| `--conda-env` | `str` | | Path to staged conda environment directory |
+| `--registry-host` | `str` | `localhost` | Registry server host (use to discover endpoints from registry instead of file) |
+| `--registry-port` | `int` | `8471` | Registry server port |
+| `--format` | `text\|json` | `text` | Output format |
+
+Extra arguments after `--` are passed through to `vllm bench serve`:
+
+```bash
+aegis bench --model meta-llama/Llama-3.3-70B-Instruct -- --dataset-name random --random-input-len 512 --random-output-len 128
+```
+
+### Endpoint discovery
+
+By default, `aegis bench` reads endpoints from the file specified by `--endpoints-file`. If `--registry-host` is set to something other than `localhost`, it queries the service registry for healthy endpoints instead.
+
+### Conda environment
+
+If your compute nodes use a staged conda environment for vLLM, pass `--conda-env` so that each benchmark rank activates the environment before running:
+
+```bash
+aegis bench --model meta-llama/Llama-3.3-70B-Instruct --conda-env /tmp/conda_env
+```
+
+### Output
+
+Results are printed as CSV to stdout (or to a file with `--output`). Each row corresponds to one endpoint, with a `SUMMARY` row showing min/max/mean across all endpoints. Metrics include request throughput, token throughput, TTFT, TPOT, ITL, and more.
+
+## `aegis shutdown`
+
+Shut down launched vLLM instances and/or cancel PBS jobs. Supports two modes that can be used independently or combined.
+
+```bash
+aegis shutdown
+```
+
+### Flags
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--endpoints-file` | `str` | `aegis_endpoints.txt` | Path to endpoints file |
+| `--job-id` | `str` | | PBS job ID to cancel via `qdel` |
+| `--remote` | `str` | | Run `qdel` via SSH on a remote login node (e.g., `user@aurora.alcf.anl.gov`) |
+
+### Process kill (default)
+
+When the endpoints file exists, `aegis shutdown` reads it to discover which nodes are running vLLM instances, then uses `mpiexec` to run `pkill -f "vllm serve"` on each node:
+
+```bash
+aegis shutdown --endpoints-file aegis_endpoints.txt
+```
+
+### PBS job cancel
+
+Use `--job-id` to cancel a PBS job via `qdel`, which kills all child processes:
+
+```bash
+aegis shutdown --job-id 12345.aurora-pbs-0001
+```
+
+### Combined
+
+Kill processes on nodes first, then cancel the PBS job:
+
+```bash
+aegis shutdown --endpoints-file aegis_endpoints.txt --job-id 12345.aurora-pbs-0001
+```
+
+### Remote cancel
+
+If `qdel` is not available locally, use `--remote` to run it via SSH:
+
+```bash
+aegis shutdown --job-id 12345.aurora-pbs-0001 --remote user@aurora.alcf.anl.gov
+```
