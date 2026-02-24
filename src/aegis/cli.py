@@ -381,12 +381,10 @@ def cmd_bench(args) -> None:
         if not first:
             mpi_cmd.append(":")
         first = False
-        base_url = f"http://localhost:{port}/v1"
         vllm_args = [
             "vllm", "bench", "serve",
             "--model", args.model,
             "--num-prompts", str(args.num_prompts),
-            "--base-url", base_url,
             "--save-result",
             "--result-dir", result_dir,
             *extra,
