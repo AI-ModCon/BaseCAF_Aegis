@@ -17,9 +17,6 @@ module load miniforge3
 eval "$(conda shell.bash hook)"
 conda activate {{ config.aegis_env }}
 {% endif %}
-{% if not config.conda_env %}
-module load frameworks
-{% endif %}
 export TMPDIR=/tmp
 
 if ! command -v aegis &>/dev/null; then
