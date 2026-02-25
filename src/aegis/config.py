@@ -59,6 +59,11 @@ class AegisConfig:
     # Output path for the endpoints file
     endpoints_file: str = "aegis_endpoints.txt"
 
+    # Benchmark settings (used when --bench is passed to aegis submit)
+    bench: bool = False
+    bench_num_prompts: int = 100
+    bench_output: Optional[str] = None
+
     # Multi-model list
     models: list[ModelConfig] = field(default_factory=list)
 

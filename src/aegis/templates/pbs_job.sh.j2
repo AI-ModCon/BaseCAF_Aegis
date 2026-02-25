@@ -82,6 +82,23 @@ cat > ${PBS_O_WORKDIR}/.aegis_config.yaml << 'AEGIS_CONFIG_EOF'
 
 aegis launch --config ${PBS_O_WORKDIR}/.aegis_config.yaml
 
+{% if config.bench %}
+echo "Running benchmark..."
+bench_args=(
+    --model {{ config.models[0].model }}
+    --num-prompts {{ config.bench_num_prompts }}
+    --endpoints-file {{ config.endpoints_file }}
+{% if config.conda_env %}
+    --conda-env /tmp/conda_env
+{% endif %}
+{% if config.bench_output %}
+    --output {{ config.bench_output }}
+{% endif %}
+)
+aegis bench "${bench_args[@]}"
+echo "Benchmark complete. Exiting."
+{% else %}
 # Keep the job alive so vLLM servers remain running until walltime expires.
 echo "Instances launched. Sleeping until walltime expires..."
 sleep infinity
+{% endif %}

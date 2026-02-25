@@ -544,6 +544,18 @@ def main(argv: list[str] | None = None) -> None:
         help="Block until instances are healthy and the endpoints file is written",
     )
     submit_parser.add_argument(
+        "--bench", action="store_true", default=None,
+        help="Run aegis bench after instances are healthy and exit the job",
+    )
+    submit_parser.add_argument(
+        "--bench-num-prompts", type=int, dest="bench_num_prompts", default=None,
+        help="Number of prompts per endpoint for the benchmark (default: 100)",
+    )
+    submit_parser.add_argument(
+        "--bench-output", type=str, dest="bench_output", default=None,
+        help="Path to write benchmark CSV results",
+    )
+    submit_parser.add_argument(
         "--remote", type=str, metavar="USER@HOST",
         help="Submit via SSH to a remote login node (e.g., user@aurora.alcf.anl.gov)",
     )
