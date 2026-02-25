@@ -329,7 +329,7 @@ def cmd_bench(args) -> None:
     hf_token = os.environ.get("HF_TOKEN")
 
     # Build mpiexec command: SPMD per port group, MPMD across groups
-    mpi_cmd: list[str] = ["mpiexec"]
+    mpi_cmd: list[str] = ["mpiexec", "--no-abort-on-failure"]
     first = True
     for port, hosts in hosts_by_port.items():
         if not first:
