@@ -341,14 +341,17 @@ def cmd_bench(args) -> None:
             "--result-dir", result_dir,
             *extra,
         ]
+        # Append --result-filename unquoted so ${PMIX_RANK} expands in the shell,
+        # giving each rank a unique output file even within an SPMD group.
+        cmd_str = shlex.join(vllm_args) + " --result-filename rank_${PMIX_RANK}"
         if args.conda_env:
             env_export = f"export HF_TOKEN={shlex.quote(hf_token)}" if hf_token else ""
             activate = f"source {args.conda_env}/bin/activate"
-            parts = [p for p in [activate, env_export, shlex.join(vllm_args)] if p]
+            parts = [p for p in [activate, env_export, cmd_str] if p]
             rank_cmd = ["bash", "-c", " && ".join(parts)]
         else:
             env_export = f"export HF_TOKEN={shlex.quote(hf_token)}" if hf_token else ""
-            parts = [p for p in ["module load frameworks", env_export, shlex.join(vllm_args)] if p]
+            parts = [p for p in ["module load frameworks", env_export, cmd_str] if p]
             rank_cmd = ["bash", "-l", "-c", " && ".join(parts)]
         env_flags = ["-env", "HF_TOKEN", hf_token] if hf_token else []
         mpi_cmd.extend([
