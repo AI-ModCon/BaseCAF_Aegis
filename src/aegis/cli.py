@@ -345,7 +345,7 @@ def cmd_bench(args) -> None:
         ]
         # Append --result-filename unquoted so ${PMIX_RANK} expands in the shell,
         # giving each rank a unique output file even within an SPMD group.
-        cmd_str = shlex.join(vllm_args) + " --result-filename rank_${PMIX_RANK}"
+        cmd_str = shlex.join(vllm_args) + " --result-filename rank_${PMIX_RANK}.json"
         if args.conda_env:
             env_export = f"export HF_TOKEN={shlex.quote(hf_token)}" if hf_token else ""
             activate = f"source {args.conda_env}/bin/activate"
