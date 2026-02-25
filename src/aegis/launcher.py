@@ -1,6 +1,7 @@
 """Core orchestration: stage weights, launch vLLM instances."""
 
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,18 @@ from pathlib import Path
 from jinja2 import Environment, PackageLoader
 
 from .config import AegisConfig, GPUS_PER_NODE, ModelConfig
+
+_verbose = False
+
+
+def set_verbose(flag: bool) -> None:
+    global _verbose
+    _verbose = flag
+
+
+def _vlog(*args) -> None:
+    if _verbose:
+        print(*args, file=sys.stderr)
 
 
 def _project_root() -> Path:
@@ -57,6 +70,7 @@ def _ensure_bcast() -> Path:
 
     if needs_build:
         print("Compiling bcast...", file=sys.stderr)
+        _vlog(f"  [bcast] make bcast (cwd={tools_dir})")
         result = subprocess.run(["make", "bcast"], cwd=tools_dir)
         if result.returncode != 0:
             print("Failed to compile bcast.", file=sys.stderr)
@@ -79,10 +93,9 @@ def stage_conda_env(config: AegisConfig) -> None:
     env["MPIR_CVAR_CH4_OFI_ENABLE_MULTI_NIC_STRIPING"] = "1"
     env["MPIR_CVAR_CH4_OFI_MAX_NICS"] = "4"
 
-    result = subprocess.run(
-        ["mpiexec", "-ppn", "1", "--cpu-bind", "numa", str(bcast_bin), tarball, "/tmp"],
-        env=env,
-    )
+    cmd = ["mpiexec", "-ppn", "1", "--cpu-bind", "numa", str(bcast_bin), tarball, "/tmp"]
+    _vlog(f"  [conda-stage] {shlex.join(cmd)}")
+    result = subprocess.run(cmd, env=env)
     if result.returncode != 0:
         print("Conda env staging failed.", file=sys.stderr)
         sys.exit(1)
@@ -139,6 +152,7 @@ def stage_weights(config: AegisConfig) -> None:
             bcast_cmd.append("--no-root-write")
         bcast_cmd.extend([source, dest])
         print(f"Staging weights: {source} -> {dest}", file=sys.stderr)
+        _vlog(f"  [weight-stage] {shlex.join(bcast_cmd)}")
         result = subprocess.run(bcast_cmd, env=env)
         if result.returncode != 0:
             print(f"Weight staging failed for {source}.", file=sys.stderr)
@@ -274,17 +288,16 @@ def launch_instances(config: AegisConfig) -> None:
                 f"nodes={instance_nodes}, port={port}",
                 file=sys.stderr,
             )
+            _vlog(f"  [instance {instance_idx}] script: {script_file.name}")
 
-            proc = subprocess.Popen(
-                [
-                    "mpiexec",
-                    "-ppn", "1",
-                    "--hostfile", hostfile.name,
-                    "-o", f"{log_dir}/{instance_idx}/%h/out.%R",
-                    script_file.name,
-                ],
-                env=os.environ,
-            )
+            mpi_launch_cmd = [
+                "mpiexec", "-ppn", "1",
+                "--hostfile", hostfile.name,
+                "-o", f"{log_dir}/{instance_idx}/%h/out.%R",
+                script_file.name,
+            ]
+            _vlog(f"  [instance {instance_idx}] {shlex.join(mpi_launch_cmd)}")
+            proc = subprocess.Popen(mpi_launch_cmd, env=os.environ)
             processes.append(proc)
             instance_idx += 1
             node_offset += npi
@@ -303,6 +316,7 @@ def launch_instances(config: AegisConfig) -> None:
         heartbeat_args.append(f"vllm-{node}-{port}:{node}:{port}")
 
     heartbeat_log = open(log_dir / "heartbeat.log", "w")
+    _vlog(f"  [heartbeat] {shlex.join(heartbeat_args)}")
     subprocess.Popen(
         heartbeat_args,
         stdin=subprocess.DEVNULL,

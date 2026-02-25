@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 from .config import AegisConfig, load_config, merge_cli_args, _normalize_models
-from .launcher import launch_instances, stage_conda_env, stage_weights
+from .launcher import launch_instances, stage_conda_env, stage_weights, set_verbose as _launcher_set_verbose
 from .registry import ServiceRegistryClient, ServiceStatus
 from .scheduler import (
     SSHConnection,
@@ -21,6 +21,7 @@ from .scheduler import (
     submit_job,
     submit_job_remote,
     wait_for_endpoints,
+    set_verbose as _scheduler_set_verbose,
 )
 
 
@@ -71,6 +72,10 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--endpoints-file", type=str, dest="endpoints_file",
         help="Output path for the endpoints file (default: aegis_endpoints.txt)",
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", default=False,
+        help="Print subprocess commands and other debug details",
     )
 
 
@@ -423,6 +428,8 @@ def cmd_bench(args) -> None:
     print(f"Launching benchmarks on {len(endpoints)} endpoint(s) via mpiexec")
     for ep in endpoints:
         print(f"  {ep}")
+    if args.verbose:
+        print(f"  [bench] {shlex.join(mpi_cmd)}", file=sys.stderr)
 
     try:
         proc = subprocess.run(mpi_cmd)
@@ -477,9 +484,10 @@ def cmd_shutdown(args) -> None:
             hosts = list(dict.fromkeys(ep.rsplit(":", 1)[0] for ep in endpoints))
             hosts_str = ",".join(hosts)
             print(f"Killing vLLM processes on: {hosts_str}")
-            result = subprocess.run(
-                ["mpiexec", "-hosts", hosts_str, "-ppn", "1", "pkill", "-f", "vllm serve"],
-            )
+            pkill_cmd = ["mpiexec", "-hosts", hosts_str, "-ppn", "1", "pkill", "-f", "vllm serve"]
+            if args.verbose:
+                print(f"  [shutdown] {shlex.join(pkill_cmd)}", file=sys.stderr)
+            result = subprocess.run(pkill_cmd)
             if result.returncode == 0:
                 print("vLLM processes terminated successfully.")
             else:
@@ -497,6 +505,8 @@ def cmd_shutdown(args) -> None:
                 ssh.run(f"qdel {job_id}")
             else:
                 print(f"Cancelling PBS job {job_id}")
+                if args.verbose:
+                    print(f"  [qdel] qdel {job_id}", file=sys.stderr)
                 subprocess.run(["qdel", job_id], check=True)
             print(f"Job {job_id} cancelled.")
         except (subprocess.CalledProcessError, RuntimeError) as exc:
@@ -601,6 +611,10 @@ def main(argv: list[str] | None = None) -> None:
     )
     _add_registry_args(bench_parser)
     bench_parser.add_argument(
+        "--verbose", "-v", action="store_true", default=False,
+        help="Print subprocess commands and other debug details",
+    )
+    bench_parser.add_argument(
         "extra_args", nargs=argparse.REMAINDER,
         help="Extra arguments passed through to vllm bench serve (put after --)",
     )
@@ -620,9 +634,17 @@ def main(argv: list[str] | None = None) -> None:
         "--remote", type=str, metavar="USER@HOST",
         help="Run qdel via SSH on a remote login node",
     )
+    shutdown_parser.add_argument(
+        "--verbose", "-v", action="store_true", default=False,
+        help="Print subprocess commands and other debug details",
+    )
     shutdown_parser.set_defaults(func=cmd_shutdown)
 
     args = parser.parse_args(argv)
+
+    _verbose = getattr(args, "verbose", False)
+    _launcher_set_verbose(_verbose)
+    _scheduler_set_verbose(_verbose)
 
     if not args.command:
         parser.print_help()

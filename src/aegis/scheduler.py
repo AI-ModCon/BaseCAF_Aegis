@@ -13,6 +13,18 @@ from jinja2 import Environment, PackageLoader
 
 from .config import AegisConfig, config_to_yaml
 
+_verbose = False
+
+
+def set_verbose(flag: bool) -> None:
+    global _verbose
+    _verbose = flag
+
+
+def _vlog(*args) -> None:
+    if _verbose:
+        print(*args, file=sys.stderr)
+
 
 def _get_template_env() -> Environment:
     return Environment(
@@ -43,6 +55,7 @@ def submit_job(script: str, hf_token: str | None = None) -> str:
     qsub_cmd.append(script_path)
 
     print(f"Submitting PBS script: {script_path}", file=sys.stderr)
+    _vlog(f"  [qsub] {shlex.join(qsub_cmd)}")
     result = subprocess.run(
         qsub_cmd,
         capture_output=True,
@@ -86,6 +99,7 @@ class SSHConnection:
         The command is wrapped in a login shell so that the user's profile
         (module loads, PATH additions, etc.) is sourced.
         """
+        _vlog(f"  [ssh] {command}")
         return subprocess.run(
             [
                 "ssh",
@@ -161,6 +175,7 @@ def submit_job_remote(script: str, ssh: SSHConnection, hf_token: str | None = No
         qsub_cmd += f" -v HF_TOKEN={shlex.quote(hf_token)}"
 
     print("Submitting PBS job via SSH ...", file=sys.stderr)
+    _vlog(f"  [ssh-qsub] {qsub_cmd} {remote_script}")
     result = ssh.run(f"{qsub_cmd} {remote_script} && rm -f {remote_script}")
     if result.returncode != 0:
         # Clean up remote file on failure too
