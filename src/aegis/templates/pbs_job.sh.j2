@@ -36,45 +36,6 @@ if [ -z "${HF_TOKEN:-}" ]; then
     echo "Warning: HF_TOKEN not set. Gated models will fail to load." >&2
 fi
 
-{% if config.conda_env %}
-# --- STAGE CONDA ENV ---
-TOOLS_DIR="${PBS_O_WORKDIR}/tools"
-BCAST_BIN="${PBS_O_WORKDIR}/bcast"
-
-pushd $TOOLS_DIR
-make bcast
-cp bcast $BCAST_BIN
-popd
-
-export MPIR_CVAR_CH4_OFI_ENABLE_MULTI_NIC_STRIPING=1
-export MPIR_CVAR_CH4_OFI_MAX_NICS=4
-
-echo "Staging conda env {{ config.conda_env }} to /tmp..."
-mpiexec -ppn 1 --cpu-bind numa $BCAST_BIN "{{ config.conda_env }}" "/tmp"
-{% endif %}
-
-{% set has_model_source = config.models | selectattr('model_source') | list | length > 0 %}
-{% if has_model_source %}
-# --- STAGE MODEL WEIGHTS ---
-TOOLS_DIR="${PBS_O_WORKDIR}/tools"
-BCAST_BIN="${PBS_O_WORKDIR}/bcast"
-
-pushd $TOOLS_DIR
-make bcast
-cp bcast $BCAST_BIN
-popd
-
-export MPIR_CVAR_CH4_OFI_ENABLE_MULTI_NIC_STRIPING=1
-export MPIR_CVAR_CH4_OFI_MAX_NICS=4
-
-{% for m in config.models %}
-{% if m.model_source %}
-echo "Staging weights from {{ m.model_source }} to {{ config.hf_home }}/hub..."
-mpiexec -ppn 1 --cpu-bind numa $BCAST_BIN "{{ m.model_source }}" "{{ config.hf_home }}/hub"
-{% endif %}
-{% endfor %}
-{% endif %}
-
 # --- WRITE CONFIG AND LAUNCH INSTANCES ---
 cat > ${PBS_O_WORKDIR}/.aegis_config.yaml << 'AEGIS_CONFIG_EOF'
 {{ config_yaml }}AEGIS_CONFIG_EOF
