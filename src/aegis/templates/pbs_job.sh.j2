@@ -17,6 +17,7 @@ eval "$(conda shell.bash hook)"
 conda activate {{ config.aegis_env }}
 {% endif %}
 export TMPDIR=/tmp
+ulimit -c unlimited
 
 if ! command -v aegis &>/dev/null; then
     echo "Error: 'aegis' command not found in the job environment." >&2

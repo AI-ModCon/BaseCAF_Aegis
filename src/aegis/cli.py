@@ -353,7 +353,7 @@ def cmd_bench(args) -> None:
             rank_cmd = ["bash", "-c", " && ".join(parts)]
         else:
             env_export = f"export HF_TOKEN={shlex.quote(hf_token)}" if hf_token else ""
-            parts = [p for p in ["module load frameworks", env_export, cmd_str] if p]
+            parts = [p for p in ["module load frameworks", "ulimit -c unlimited", env_export, cmd_str] if p]
             rank_cmd = ["bash", "-l", "-c", " && ".join(parts)]
         env_flags = ["-env", "HF_TOKEN", hf_token] if hf_token else []
         mpi_cmd.extend([
