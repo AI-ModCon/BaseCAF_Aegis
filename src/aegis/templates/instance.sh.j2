@@ -31,7 +31,7 @@ export HF_DATASETS_CACHE="/tmp/hf_home"
 export HF_MODULES_CACHE="/tmp/hf_home"
 export HF_HUB_OFFLINE=1
 {% elif apptainer_image %}
-# Apptainer container provides the vLLM environment; no module loading needed.
+module load apptainer
 {% else %}
 module load frameworks
 export CCL_PROCESS_LAUNCHER=torchrun
