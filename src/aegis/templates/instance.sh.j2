@@ -33,7 +33,7 @@ export HF_HUB_OFFLINE=1
 {% elif apptainer_image %}
 module load apptainer
 LIBFABRIC_PREFIX=$(pkg-config libfabric --variable=prefix)
-export LD_LIBRARY_PATH=${LIBFABRIC_PREFIX}/lib64:${LD_LIBRARY_PATH}
+export LD_LIBRARY_PATH=${LIBFABRIC_PREFIX}/lib64:/usr/lib64:${LD_LIBRARY_PATH}
 CXI_BINDS=$(ls /dev/cxi* 2>/dev/null | paste -sd,)
 export ZE_FLAT_DEVICE_HIERARCHY=FLAT
 unset ONEAPI_DEVICE_SELECTOR
@@ -60,7 +60,7 @@ export HF_HOME="{{ hf_home }}"
 
 {% if apptainer_image %}
 numactl --cpunodebind=0 --membind=0 apptainer exec \
-    --bind /opt/cray${CXI_BINDS:+,${CXI_BINDS}} \
+    --bind /opt/cray,/usr/lib64/libcxi.so.1,/usr/lib64/libnl-3.so.200:/lib/x86_64-linux-gnu/libnl-3.so.200${CXI_BINDS:+,${CXI_BINDS}} \
     /tmp/{{ apptainer_image.split('/')[-1] }} vllm serve {{ model }} \
 {% else %}
 numactl --cpunodebind=0 --membind=0 vllm serve {{ model }} \
