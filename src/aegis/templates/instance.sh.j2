@@ -60,7 +60,7 @@ export HF_HOME="{{ hf_home }}"
 
 {% if apptainer_image %}
 numactl --cpunodebind=0 --membind=0 apptainer exec \
-    --bind ${LIBFABRIC_PREFIX}${CXI_BINDS:+,${CXI_BINDS}} \
+    --bind /opt/cray${CXI_BINDS:+,${CXI_BINDS}} \
     /tmp/{{ apptainer_image.split('/')[-1] }} vllm serve {{ model }} \
 {% else %}
 numactl --cpunodebind=0 --membind=0 vllm serve {{ model }} \
