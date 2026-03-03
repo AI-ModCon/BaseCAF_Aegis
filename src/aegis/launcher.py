@@ -79,10 +79,13 @@ def _ensure_bcast() -> Path:
     return bcast_bin
 
 
-def stage_conda_env(config: AegisConfig) -> None:
-    """Compile bcast (if needed) and broadcast a conda-pack tarball to all nodes."""
+def stage_conda_env(config: AegisConfig) -> float | None:
+    """Compile bcast (if needed) and broadcast a conda-pack tarball to all nodes.
+
+    Returns the elapsed time in seconds, or None if staging was skipped.
+    """
     if not config.conda_env:
-        return
+        return None
 
     bcast_bin = _ensure_bcast()
 
@@ -102,12 +105,16 @@ def stage_conda_env(config: AegisConfig) -> None:
         sys.exit(1)
     elapsed = time.monotonic() - t0
     print(f"Conda env staging complete ({elapsed:.1f}s).", file=sys.stderr)
+    return elapsed
 
 
-def stage_apptainer_image(config: AegisConfig) -> None:
-    """Compile bcast (if needed) and broadcast an Apptainer image to all nodes."""
+def stage_apptainer_image(config: AegisConfig) -> float | None:
+    """Compile bcast (if needed) and broadcast an Apptainer image to all nodes.
+
+    Returns the elapsed time in seconds, or None if staging was skipped.
+    """
     if not config.apptainer_image:
-        return
+        return None
 
     bcast_bin = _ensure_bcast()
     image = config.apptainer_image
@@ -126,6 +133,7 @@ def stage_apptainer_image(config: AegisConfig) -> None:
         sys.exit(1)
     elapsed = time.monotonic() - t0
     print(f"Apptainer image staging complete ({elapsed:.1f}s).", file=sys.stderr)
+    return elapsed
 
 
 def _download_hf_weights(config: AegisConfig) -> None:
@@ -153,13 +161,16 @@ def _download_hf_weights(config: AegisConfig) -> None:
         m.model_source = downloaded_path
 
 
-def stage_weights(config: AegisConfig) -> None:
-    """Compile bcast (if needed) and broadcast model weights to local storage."""
+def stage_weights(config: AegisConfig) -> float | None:
+    """Compile bcast (if needed) and broadcast model weights to local storage.
+
+    Returns the total elapsed time in seconds, or None if staging was skipped.
+    """
     _download_hf_weights(config)
 
     if not any(m.model_source for m in config.models):
         print("No model_source specified, skipping weight staging.", file=sys.stderr)
-        return
+        return None
 
     bcast_bin = _ensure_bcast()
 
@@ -168,6 +179,7 @@ def stage_weights(config: AegisConfig) -> None:
     env["MPIR_CVAR_CH4_OFI_ENABLE_MULTI_NIC_STRIPING"] = "1"
     env["MPIR_CVAR_CH4_OFI_MAX_NICS"] = "4"
 
+    t_total = time.monotonic()
     for m in config.models:
         if not m.model_source:
             continue
@@ -186,7 +198,9 @@ def stage_weights(config: AegisConfig) -> None:
         elapsed = time.monotonic() - t0
         print(f"Weight staging complete for {source} ({elapsed:.1f}s).", file=sys.stderr)
 
+    total_elapsed = time.monotonic() - t_total
     print("All weight staging complete.", file=sys.stderr)
+    return total_elapsed
 
 
 def _wait_for_instances(
@@ -257,7 +271,10 @@ def _wait_for_instances(
     return [(n, p) for n, p in endpoints if (n, p) in ready]
 
 
-def launch_instances(config: AegisConfig) -> None:
+def launch_instances(
+    config: AegisConfig,
+    staging_times: dict[str, float] | None = None,
+) -> None:
     """Launch vLLM instances across allocated nodes."""
     nodes = _get_allocated_nodes()
     total_nodes_needed = config.nodes_needed
@@ -398,6 +415,17 @@ def launch_instances(config: AegisConfig) -> None:
             f.write(f"{node}:{port}\n")
 
     total_wait = time.monotonic() - t_wait_start
+
+    if staging_times:
+        print("Staging times:", file=sys.stderr)
+        labels = {"conda_env": "conda env", "apptainer_image": "apptainer image", "weights": "weights"}
+        for key, label in labels.items():
+            t = staging_times.get(key)
+            if t is not None:
+                print(f"  {label + ':':<20} {t:.1f}s", file=sys.stderr)
+        total_staging = sum(staging_times.values())
+        print(f"  {'total:':<20} {total_staging:.1f}s", file=sys.stderr)
+
     print(
         f"{len(healthy)}/{total_instances} instance(s) are healthy "
         f"(total wait: {total_wait:.1f}s).",

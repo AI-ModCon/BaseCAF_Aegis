@@ -185,13 +185,20 @@ def cmd_launch(args) -> None:
 
     _check_gated_models(config)
 
+    staging_times: dict[str, float] = {}
     if not args.skip_staging:
-        stage_conda_env(config)
-        stage_apptainer_image(config)
-        stage_weights(config)
+        t = stage_conda_env(config)
+        if t is not None:
+            staging_times["conda_env"] = t
+        t = stage_apptainer_image(config)
+        if t is not None:
+            staging_times["apptainer_image"] = t
+        t = stage_weights(config)
+        if t is not None:
+            staging_times["weights"] = t
     else:
         print("Skipping conda env and weight staging (--skip-staging)", file=sys.stderr)
-    launch_instances(config)
+    launch_instances(config, staging_times=staging_times or None)
 
 
 # ---------------------------------------------------------------------------
