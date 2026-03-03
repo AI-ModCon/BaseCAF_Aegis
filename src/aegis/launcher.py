@@ -95,12 +95,13 @@ def stage_conda_env(config: AegisConfig) -> None:
 
     cmd = ["mpiexec", "-ppn", "1", "--cpu-bind", "numa", str(bcast_bin), tarball, "/tmp"]
     _vlog(f"  [conda-stage] {shlex.join(cmd)}")
+    t0 = time.monotonic()
     result = subprocess.run(cmd, env=env)
     if result.returncode != 0:
         print("Conda env staging failed.", file=sys.stderr)
         sys.exit(1)
-
-    print("Conda env staging complete.", file=sys.stderr)
+    elapsed = time.monotonic() - t0
+    print(f"Conda env staging complete ({elapsed:.1f}s).", file=sys.stderr)
 
 
 def stage_apptainer_image(config: AegisConfig) -> None:
@@ -118,12 +119,13 @@ def stage_apptainer_image(config: AegisConfig) -> None:
 
     cmd = ["mpiexec", "-ppn", "1", "--cpu-bind", "numa", str(bcast_bin), image, "/tmp"]
     _vlog(f"  [apptainer-stage] {shlex.join(cmd)}")
+    t0 = time.monotonic()
     result = subprocess.run(cmd, env=env)
     if result.returncode != 0:
         print("Apptainer image staging failed.", file=sys.stderr)
         sys.exit(1)
-
-    print("Apptainer image staging complete.", file=sys.stderr)
+    elapsed = time.monotonic() - t0
+    print(f"Apptainer image staging complete ({elapsed:.1f}s).", file=sys.stderr)
 
 
 def _download_hf_weights(config: AegisConfig) -> None:
@@ -176,12 +178,15 @@ def stage_weights(config: AegisConfig) -> None:
         bcast_cmd.extend([source, dest])
         print(f"Staging weights: {source} -> {dest}", file=sys.stderr)
         _vlog(f"  [weight-stage] {shlex.join(bcast_cmd)}")
+        t0 = time.monotonic()
         result = subprocess.run(bcast_cmd, env=env)
         if result.returncode != 0:
             print(f"Weight staging failed for {source}.", file=sys.stderr)
             sys.exit(1)
+        elapsed = time.monotonic() - t0
+        print(f"Weight staging complete for {source} ({elapsed:.1f}s).", file=sys.stderr)
 
-    print("Weight staging complete.", file=sys.stderr)
+    print("All weight staging complete.", file=sys.stderr)
 
 
 def _wait_for_instances(
@@ -196,7 +201,9 @@ def _wait_for_instances(
     # Bypass http_proxy env vars — health checks target internal compute nodes.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     ready = set()
-    deadline = time.monotonic() + timeout
+    ready_times: dict[tuple[str, int], float] = {}
+    start = time.monotonic()
+    deadline = start + timeout
     cycle = 0
 
     while time.monotonic() < deadline:
@@ -208,9 +215,11 @@ def _wait_for_instances(
             try:
                 with opener.open(url, timeout=5) as resp:
                     if resp.status == 200:
+                        elapsed = time.monotonic() - start
                         ready.add((node, port))
+                        ready_times[(node, port)] = elapsed
                         print(
-                            f"Instance {node}:{port} is ready "
+                            f"Instance {node}:{port} is ready in {elapsed:.1f}s "
                             f"({len(ready)}/{len(endpoints)})",
                             file=sys.stderr,
                         )
@@ -233,6 +242,16 @@ def _wait_for_instances(
             + ", ".join(f"{n}:{p}" for n, p in not_ready),
             file=sys.stderr,
         )
+
+    if ready_times:
+        print("Instance startup times:", file=sys.stderr)
+        for node, port in endpoints:
+            if (node, port) in ready_times:
+                print(f"  {node}:{port}  {ready_times[(node, port)]:.1f}s", file=sys.stderr)
+            else:
+                print(f"  {node}:{port}  timed out", file=sys.stderr)
+        avg = sum(ready_times.values()) / len(ready_times)
+        print(f"  Average: {avg:.1f}s", file=sys.stderr)
 
     return [(n, p) for n, p in endpoints if (n, p) in ready]
 
@@ -327,6 +346,7 @@ def launch_instances(config: AegisConfig) -> None:
             node_offset += npi
 
     total_instances = instance_idx
+    t_wait_start = time.monotonic()
     print(f"All {total_instances} instance(s) launched. Waiting for health checks...", file=sys.stderr)
 
     # Spawn the heartbeat process which creates the in-memory registry,
@@ -376,8 +396,10 @@ def launch_instances(config: AegisConfig) -> None:
         for node, port in healthy:
             f.write(f"{node}:{port}\n")
 
+    total_wait = time.monotonic() - t_wait_start
     print(
-        f"{len(healthy)}/{total_instances} instance(s) are healthy.",
+        f"{len(healthy)}/{total_instances} instance(s) are healthy "
+        f"(total wait: {total_wait:.1f}s).",
         file=sys.stderr,
     )
     print(f"Endpoints written to {endpoints_file.resolve()}", file=sys.stderr)
