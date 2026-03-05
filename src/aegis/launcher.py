@@ -352,12 +352,10 @@ def launch_instances(
             hostfile.close()
             tmp_files.append(hostfile.name)
 
-            print(
-                f"Launching instance {instance_idx} ({model_cfg.model}): "
-                f"nodes={instance_nodes}, port={port}",
-                file=sys.stderr,
+            _vlog(
+                f"  [instance {instance_idx}] {model_cfg.model} "
+                f"nodes={instance_nodes} port={port} script={script_file.name}"
             )
-            _vlog(f"  [instance {instance_idx}] script: {script_file.name}")
 
             mpi_launch_cmd = [
                 "mpiexec", "-ppn", "1",
@@ -373,7 +371,7 @@ def launch_instances(
 
     total_instances = instance_idx
     t_wait_start = time.monotonic()
-    print(f"All {total_instances} instance(s) launched. Waiting for health checks...", file=sys.stderr)
+    print(f"Launched {total_instances} instance(s), waiting for health checks...", file=sys.stderr)
 
     # Spawn the heartbeat process which creates the in-memory registry,
     # registers all instances as STARTING, and serves the HTTP query API.
@@ -393,9 +391,10 @@ def launch_instances(
         stdout=heartbeat_log,
         stderr=heartbeat_log,
     )
-    print(f"Started heartbeat monitor for {len(endpoints)} instance(s)", file=sys.stderr)
-    print(f"Service registry: http://{head_node}:{config.registry_port}", file=sys.stderr)
-    print(f"Logs: {log_dir}", file=sys.stderr)
+    print(
+        f"Heartbeat monitor started. Registry: http://{head_node}:{config.registry_port}  Logs: {log_dir}",
+        file=sys.stderr,
+    )
 
     # Write the registry URL sidecar file early so the submit side can find it
     # as soon as the registry is available, even before instances are healthy.
