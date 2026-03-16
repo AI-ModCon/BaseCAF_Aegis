@@ -223,6 +223,8 @@ def cmd_registry_list(args) -> None:
         service_type=args.type,
         status_filter=args.status,
     )
+    if args.model:
+        services = [s for s in services if s.metadata.get("model") == args.model]
     print(_format_services(services, args.format))
 
 
@@ -244,6 +246,8 @@ def cmd_registry_list_healthy(args) -> None:
         service_type=args.type,
         timeout_seconds=args.timeout,
     )
+    if args.model:
+        services = [s for s in services if s.metadata.get("model") == args.model]
     print(_format_services(services, args.format))
 
 
@@ -561,6 +565,7 @@ def main(argv: list[str] | None = None) -> None:
     _add_registry_args(reg_list)
     reg_list.add_argument("--type", type=str, default=None, help="Filter by service type")
     reg_list.add_argument("--status", type=str, default=None, help="Filter by status")
+    reg_list.add_argument("--model", type=str, default=None, help="Filter by model name")
     reg_list.set_defaults(func=cmd_registry_list)
 
     # registry get
@@ -574,6 +579,7 @@ def main(argv: list[str] | None = None) -> None:
     _add_registry_args(reg_healthy)
     reg_healthy.add_argument("--type", type=str, default=None, help="Filter by service type")
     reg_healthy.add_argument("--timeout", type=int, default=30, help="Heartbeat timeout in seconds")
+    reg_healthy.add_argument("--model", type=str, default=None, help="Filter by model name")
     reg_healthy.set_defaults(func=cmd_registry_list_healthy)
 
     # registry count
