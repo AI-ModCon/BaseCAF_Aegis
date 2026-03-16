@@ -211,7 +211,9 @@ def _format_services(services, fmt: str) -> str:
         return json.dumps([s.to_dict() for s in services], indent=2)
     lines = []
     for s in services:
-        lines.append(f"{s.service_id}  {s.host}:{s.port}  {s.status}  last_seen={s.last_seen:.1f}")
+        model = s.metadata.get("model", "") if s.metadata else ""
+        model_str = f"  {model}" if model else ""
+        lines.append(f"{s.service_id}  {s.host}:{s.port}  {s.status}  last_seen={s.last_seen:.1f}{model_str}")
     return "\n".join(lines) if lines else "(no services)"
 
 
