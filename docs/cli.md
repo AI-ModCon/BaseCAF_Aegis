@@ -15,7 +15,7 @@ aegis submit --config config.yaml
 | Flag | Type | Description |
 |------|------|-------------|
 | `--dry-run` | flag | Print the generated PBS script without submitting |
-| `--aegis-env` | `str` | Path to a conda environment containing the aegis package |
+| `--aegis-env` | `str` | Path to a conda environment containing the aegis package. If omitted, Aegis automatically detects the active conda environment used to run `aegis submit`. |
 | `--wait` | flag | Block until instances are healthy and the endpoints file is written |
 | `--remote` | `str` | Submit via SSH to a remote login node (e.g., `user@aurora.alcf.anl.gov`) |
 
@@ -92,6 +92,7 @@ Query the service registry to discover running vLLM instances.
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
+| `--registry-url` | `str` | | Full registry URL, e.g. `http://node01:8471` — overrides `--registry-host`/`--registry-port` |
 | `--registry-host` | `str` | `localhost` | Registry server host |
 | `--registry-port` | `int` | `8471` | Registry server port |
 | `--format` | `text\|json` | `text` | Output format |
@@ -101,13 +102,20 @@ Query the service registry to discover running vLLM instances.
 List all registered services.
 
 ```bash
-aegis registry list [--type TYPE] [--status STATUS]
+aegis registry list [--type TYPE] [--status STATUS] [--model MODEL]
 ```
 
 | Flag | Type | Description |
 |------|------|-------------|
 | `--type` | `str` | Filter by service type |
 | `--status` | `str` | Filter by status |
+| `--model` | `str` | Filter by model name (e.g. `meta-llama/Llama-3.1-70B-Instruct`) |
+
+Text output includes the model name being served on each instance:
+
+```
+vllm-node01-8000  node01:8000  healthy  last_seen=1.2  meta-llama/Llama-3.1-70B-Instruct
+```
 
 ### `aegis registry get`
 
@@ -122,13 +130,14 @@ aegis registry get SERVICE_ID
 List services that are currently healthy (recent heartbeat).
 
 ```bash
-aegis registry list-healthy [--type TYPE] [--timeout SECONDS]
+aegis registry list-healthy [--type TYPE] [--timeout SECONDS] [--model MODEL]
 ```
 
 | Flag | Type | Default | Description |
 |------|------|---------|-------------|
 | `--type` | `str` | | Filter by service type |
 | `--timeout` | `int` | `30` | Heartbeat timeout in seconds |
+| `--model` | `str` | | Filter by model name |
 
 ### `aegis registry count`
 
@@ -159,6 +168,7 @@ aegis bench --model meta-llama/Llama-3.3-70B-Instruct
 | `--endpoints-file` | `str` | `aegis_endpoints.txt` | Path to endpoints file |
 | `--output` | `str` | stdout | Path to write CSV results |
 | `--conda-env` | `str` | | Path to staged conda environment directory |
+| `--registry-url` | `str` | | Full registry URL (e.g. `http://node01:8471`); overrides `--registry-host`/`--registry-port` |
 | `--registry-host` | `str` | `localhost` | Registry server host (use to discover endpoints from registry instead of file) |
 | `--registry-port` | `int` | `8471` | Registry server port |
 | `--format` | `text\|json` | `text` | Output format |
@@ -171,7 +181,7 @@ aegis bench --model meta-llama/Llama-3.3-70B-Instruct -- --dataset-name random -
 
 ### Endpoint discovery
 
-By default, `aegis bench` reads endpoints from the file specified by `--endpoints-file`. If `--registry-host` is set to something other than `localhost`, it queries the service registry for healthy endpoints instead.
+By default, `aegis bench` reads endpoints from the file specified by `--endpoints-file`. If `--registry-url` is provided, or `--registry-host` is set to something other than `localhost`, it queries the service registry for healthy endpoints instead.
 
 ### Conda environment
 
