@@ -512,6 +512,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#frameworks-module-workaround" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Frameworks Module Workaround
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mpi-broadcast-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MPI Broadcast Example
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -669,6 +691,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#frameworks-module-workaround" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Frameworks Module Workaround
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mpi-broadcast-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MPI Broadcast Example
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -717,6 +761,16 @@
 <p>These flags can be combined — see <a href="../../cli/">CLI Reference</a> for the full list.</p>
 <h2 id="vllm-availability">vLLM Availability</h2>
 <p>vLLM is pre-installed on Aurora compute nodes via <code>module load frameworks</code>. Alternatively, distribute a custom environment with the <code>--conda-env</code> option (see <a href="../../getting-started/#staging-a-conda-environment">Getting Started</a>).</p>
+<h2 id="frameworks-module-workaround">Frameworks Module Workaround</h2>
+<p>The <code>frameworks</code> module on Aurora has a bug that crashes vLLM during model inspection for certain architectures. Aegis automatically runs <code>tools/vllm_build_all_modelinfo_caches.py</code> on every node before launching a model to pre-populate vLLM's model-info caches and avoid this codepath. No user action is required.</p>
+<h2 id="mpi-broadcast-example">MPI Broadcast Example</h2>
+<p><code>examples/broadcast_mpi.py</code> demonstrates large-scale inference using MPI for co-located HTTP requests. Each MPI rank runs on the same node as its vLLM server and makes a single request to <code>localhost:{port}</code>, avoiding the file-descriptor and connection limits of async approaches:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python<span class="w"> </span>examples/broadcast_mpi.py<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">    </span>--registry-url<span class="w"> </span>http://node01:8471<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span>--prompt<span class="w"> </span><span class="s2">&quot;Answer yes or no: is the sky blue?&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span>--model<span class="w"> </span>meta-llama/Llama-3.1-70B-Instruct
+</code></pre></div>
+<p>The script launches one MPI rank per healthy instance discovered from the registry, gathers all responses, and prints majority-vote and concatenated results.</p>
 
 
 
