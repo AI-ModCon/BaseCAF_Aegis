@@ -139,6 +139,19 @@ def cmd_submit(args) -> None:
 
     _check_gated_models(config)
 
+    if not config.aegis_env:
+        # Infer the conda env from the running Python process so the submitted
+        # job uses the same aegis installation without requiring aegis_env in config.
+        _conda_prefix = os.environ.get("CONDA_PREFIX")
+        if _conda_prefix and (Path(_conda_prefix) / "conda-meta").is_dir():
+            config.aegis_env = _conda_prefix
+        else:
+            _prefix = Path(sys.executable).parent.parent
+            if (_prefix / "conda-meta").is_dir():
+                config.aegis_env = str(_prefix)
+        if config.aegis_env:
+            print(f"Using running conda environment for job: {config.aegis_env}", file=sys.stderr)
+
     script = generate_pbs_script(config)
 
     if args.dry_run:
