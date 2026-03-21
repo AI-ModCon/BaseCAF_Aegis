@@ -13,3 +13,6 @@ build/
 # Compiled binaries
 *.o
 tools/bcast
+
+# Packed Conda Environments
+assets
