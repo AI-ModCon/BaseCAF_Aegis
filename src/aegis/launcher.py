@@ -137,28 +137,50 @@ def stage_apptainer_image(config: AegisConfig) -> float | None:
 
 
 def _download_hf_weights(config: AegisConfig) -> None:
-    """Download model weights from HuggingFace Hub for models that request it."""
-    models_to_download = [
-        m for m in config.models if m.download_weights and not m.model_source
+    """Download model weights from HuggingFace Hub.
+
+    Two cases trigger a download:
+    - model_source is set but the path does not yet exist on disk: weights are
+      downloaded directly into model_source so the same config can be reused on
+      future runs without re-downloading.
+    - download_weights is True and no model_source is set: weights are
+      downloaded into hf_home and model_source is set to the resulting path.
+    """
+    needs_download = [
+        m for m in config.models
+        if (m.model_source and not Path(m.model_source).exists())
+        or (m.download_weights and not m.model_source)
     ]
-    if not models_to_download:
+    if not needs_download:
         return
 
     try:
         from huggingface_hub import snapshot_download
     except ImportError:
         print(
-            "Error: huggingface_hub is required for --download-weights.\n"
+            "Error: huggingface_hub is required for weight downloading.\n"
             "Install it with: pip install huggingface_hub",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    for m in models_to_download:
-        print(f"Downloading weights from HuggingFace Hub: {m.model}", file=sys.stderr)
-        downloaded_path = snapshot_download(m.model, cache_dir=config.hf_home)
-        print(f"Downloaded {m.model} to {downloaded_path}", file=sys.stderr)
-        m.model_source = downloaded_path
+    token = config.hf_token or os.environ.get("HF_TOKEN")
+
+    for m in needs_download:
+        if m.model_source and not Path(m.model_source).exists():
+            print(
+                f"model_source '{m.model_source}' not found. "
+                f"Downloading {m.model} from HuggingFace Hub...",
+                file=sys.stderr,
+            )
+            snapshot_download(m.model, local_dir=m.model_source, token=token)
+            print(f"Downloaded {m.model} to {m.model_source}", file=sys.stderr)
+        else:
+            # download_weights=True, no model_source: download into hf_home cache
+            print(f"Downloading weights from HuggingFace Hub: {m.model}", file=sys.stderr)
+            downloaded_path = snapshot_download(m.model, cache_dir=config.hf_home, token=token)
+            print(f"Downloaded {m.model} to {downloaded_path}", file=sys.stderr)
+            m.model_source = downloaded_path
 
 
 def stage_weights(config: AegisConfig) -> float | None:
