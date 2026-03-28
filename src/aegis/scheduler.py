@@ -30,8 +30,6 @@ def _get_template_env() -> Environment:
     return Environment(
         loader=PackageLoader("aegis", "templates"),
         keep_trailing_newline=True,
-        trim_blocks=True,
-        lstrip_blocks=True,
     )
 
 
