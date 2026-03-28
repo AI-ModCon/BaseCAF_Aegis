@@ -22,8 +22,20 @@ class ModelConfig:
     extra_vllm_args: list[str] = field(default_factory=list)
 
     @property
+    def instances_per_node(self) -> int:
+        """How many instances of this model fit on a single node.
+
+        When tensor_parallel_size is smaller than the node's GPU count,
+        multiple replicas can be packed onto one node. For large models
+        that span multiple nodes this is always 1.
+        """
+        if self.tensor_parallel_size >= GPUS_PER_NODE:
+            return 1
+        return GPUS_PER_NODE // self.tensor_parallel_size
+
+    @property
     def nodes_per_instance(self) -> int:
-        """Number of nodes each instance of this model spans."""
+        """Number of nodes each instance of this model spans (≥1)."""
         return math.ceil(self.tensor_parallel_size / GPUS_PER_NODE)
 
 
@@ -69,9 +81,15 @@ class AegisConfig:
 
     @property
     def nodes_needed(self) -> int:
-        """Calculate the number of nodes needed across all models."""
+        """Calculate the number of nodes needed across all models.
+
+        Uses ceil(instances * tensor_parallel_size / GPUS_PER_NODE) per
+        model so that packed small-TP models share nodes correctly.
+        Example: TP=4, 96 instances → ceil(96*4/12) = 32 nodes.
+        """
         return sum(
-            m.instances * m.nodes_per_instance for m in self.models
+            math.ceil(m.instances * m.tensor_parallel_size / GPUS_PER_NODE)
+            for m in self.models
         )
 
 

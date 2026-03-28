@@ -19,6 +19,8 @@ conda-unpack
 export LD_LIBRARY_PATH=/tmp/conda_env/lib/python3.12/site-packages/intel_extension_for_pytorch/lib:/tmp/conda_env/lib:/tmp/conda_env/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}:/usr/lib64
 export ZE_FLAT_DEVICE_HIERARCHY=FLAT
 unset ONEAPI_DEVICE_SELECTOR
+{% if ze_affinity_mask %}export ZE_AFFINITY_MASK="{{ ze_affinity_mask }}"
+{% endif %}
 export CCL_PROCESS_LAUNCHER=None
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export FI_MR_CACHE_MONITOR=userfaultfd

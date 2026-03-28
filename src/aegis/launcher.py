@@ -1,5 +1,6 @@
 """Core orchestration: stage weights, launch vLLM instances."""
 
+import math
 import os
 import shlex
 import subprocess
@@ -290,9 +291,25 @@ def launch_instances(config: AegisConfig) -> None:
     node_offset = 0
 
     for model_cfg in config.models:
+        npi = model_cfg.nodes_per_instance   # ceil(TP/12); ≥1
+        iph = model_cfg.instances_per_node   # 12//TP when TP<12; else 1
+
         for j in range(model_cfg.instances):
-            npi = model_cfg.nodes_per_instance
-            instance_nodes = nodes[node_offset : node_offset + npi]
+            if npi > 1:
+                # Large TP: one instance spans multiple nodes
+                node_start = node_offset + j * npi
+                instance_nodes = nodes[node_start : node_start + npi]
+                ze_affinity_mask = None  # use all GPUs on every node
+            else:
+                # Small TP: pack iph instances per node
+                node_idx = node_offset + (j // iph)
+                slot_idx = j % iph
+                instance_nodes = [nodes[node_idx]]
+                gpu_start = slot_idx * model_cfg.tensor_parallel_size
+                ze_affinity_mask = ",".join(
+                    str(i) for i in range(gpu_start, gpu_start + model_cfg.tensor_parallel_size)
+                )
+
             head_node = instance_nodes[0]
             port = config.port_start + node_port_counter.get(head_node, 0)
             node_port_counter[head_node] = node_port_counter.get(head_node, 0) + 1
@@ -307,6 +324,7 @@ def launch_instances(config: AegisConfig) -> None:
                 extra_vllm_args=model_cfg.extra_vllm_args,
                 conda_env=config.conda_env,
                 apptainer_image=config.apptainer_image,
+                ze_affinity_mask=ze_affinity_mask,
             )
 
             # Write to a temp file on the shared filesystem
@@ -331,7 +349,8 @@ def launch_instances(config: AegisConfig) -> None:
 
             print(
                 f"Launching instance {instance_idx} ({model_cfg.model}): "
-                f"nodes={instance_nodes}, port={port}",
+                f"nodes={instance_nodes}, port={port}"
+                + (f", gpus={ze_affinity_mask}" if ze_affinity_mask else ""),
                 file=sys.stderr,
             )
             _vlog(f"  [instance {instance_idx}] script: {script_file.name}")
@@ -346,7 +365,11 @@ def launch_instances(config: AegisConfig) -> None:
             proc = subprocess.Popen(mpi_launch_cmd, env=os.environ)
             processes.append(proc)
             instance_idx += 1
-            node_offset += npi
+
+        # Advance node_offset by nodes consumed by this model
+        node_offset += math.ceil(
+            model_cfg.instances * model_cfg.tensor_parallel_size / GPUS_PER_NODE
+        )
 
     total_instances = instance_idx
     print(f"All {total_instances} instance(s) launched. Waiting for health checks...", file=sys.stderr)
