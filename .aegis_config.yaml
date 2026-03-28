@@ -1,0 +1,16 @@
+port_start: 8000
+hf_home: /tmp/hf_home
+walltime: 01:00:00
+queue: debug
+account: ModCon
+filesystems: flare:home
+conda_env: /home/ogokdemir/Aegis/assets/condapacks/vllm_oss_conda_pack_01082026.tar.gz
+models:
+- model: openai/gpt-oss-20b
+  instances: 2
+  tensor_parallel_size: 4
+  model_source: /flare/datasets/model-weights/hub/models--openai--gpt-oss-20b
+  download_weights: true
+  extra_vllm_args:
+  - --max-model-len
+  - '4096'
