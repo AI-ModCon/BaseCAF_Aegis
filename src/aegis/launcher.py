@@ -333,64 +333,95 @@ def launch_instances(
     tmp_files = []
     instance_idx = 0
     node_offset = 0
-    all_instance_nodes = []
 
     for model_cfg in config.models:
-        port = config.port_start
-        script_content = template.render(
-            model=model_cfg.model,
-            tensor_parallel_size=model_cfg.tensor_parallel_size,
-            port=port,
-            hf_home=config.hf_home,
-            extra_vllm_args=model_cfg.extra_vllm_args,
-            conda_env=config.conda_env,
-            apptainer_image=config.apptainer_image,
-            modelinfo_cache_script=str(
-                _project_root() / "tools" / "vllm_build_all_modelinfo_caches.py"
-            ),
-        )
-        script_file = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".sh", prefix=f"aegis_model_{model_cfg.model.replace('/', '_')}_",
-            dir=shared_tmpdir, delete=False,
-        )
-        script_file.write(script_content)
-        script_file.close()
-        os.chmod(script_file.name, 0o755)
-        tmp_files.append(script_file.name)
+        npi = model_cfg.nodes_per_instance   # ceil(TP/12); ≥1
+        iph = model_cfg.instances_per_node   # 12//TP when TP<12; else 1
 
         for j in range(model_cfg.instances):
-            node = nodes[node_offset]
-            endpoints.append((node, port))
-            endpoint_models[(node, port)] = model_cfg.model
-            all_instance_nodes.append((node, script_file.name, instance_idx))
-            _vlog(f"  [instance {instance_idx}] {model_cfg.model} node={node} port={port}")
+            if npi > 1:
+                # Large TP: one instance spans multiple nodes — use all GPUs
+                node_start = node_offset + j * npi
+                instance_nodes = nodes[node_start : node_start + npi]
+                ze_affinity_mask = None
+                port = config.port_start
+            else:
+                # Small TP: pack iph instances per node with GPU sub-slicing
+                node_idx = node_offset + (j // iph)
+                slot_idx = j % iph
+                instance_nodes = [nodes[node_idx]]
+                gpu_start = slot_idx * model_cfg.tensor_parallel_size
+                ze_affinity_mask = ",".join(
+                    str(i) for i in range(gpu_start, gpu_start + model_cfg.tensor_parallel_size)
+                )
+                port = config.port_start + slot_idx
+
+            # Each instance gets its own script (unique port + affinity mask)
+            script_content = template.render(
+                model=model_cfg.model,
+                tensor_parallel_size=model_cfg.tensor_parallel_size,
+                port=port,
+                hf_home=config.hf_home,
+                extra_vllm_args=model_cfg.extra_vllm_args,
+                conda_env=config.conda_env,
+                apptainer_image=config.apptainer_image,
+                ze_affinity_mask=ze_affinity_mask,
+                modelinfo_cache_script=str(
+                    _project_root() / "tools" / "vllm_build_all_modelinfo_caches.py"
+                ),
+            )
+            script_file = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".sh",
+                prefix=f"aegis_{model_cfg.model.replace('/', '_')}_i{j}_",
+                dir=shared_tmpdir, delete=False,
+            )
+            script_file.write(script_content)
+            script_file.close()
+            os.chmod(script_file.name, 0o755)
+            tmp_files.append(script_file.name)
+
+            head_node = instance_nodes[0]
+            endpoints.append((head_node, port))
+            endpoint_models[(head_node, port)] = model_cfg.model
+
+            af_msg = f" ZE_AFFINITY_MASK={ze_affinity_mask}" if ze_affinity_mask else ""
+            _vlog(f"  [instance {instance_idx}] {model_cfg.model} "
+                  f"node={head_node} port={port}{af_msg}")
+
+            # Launch via mpiexec — one invocation per instance
+            if npi > 1:
+                hostfile = tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".hosts",
+                    prefix=f"aegis_hosts_i{j}_",
+                    dir=shared_tmpdir, delete=False,
+                )
+                for n in instance_nodes:
+                    hostfile.write(f"{n}\n")
+                hostfile.close()
+                tmp_files.append(hostfile.name)
+                mpi_cmd = [
+                    "mpiexec", "-ppn", "1",
+                    "--hostfile", hostfile.name,
+                    "-o", f"{log_dir}/%r/%h/out.%R",
+                    script_file.name,
+                ]
+            else:
+                mpi_cmd = [
+                    "mpiexec", "-n", "1",
+                    "--host", head_node,
+                    "-o", f"{log_dir}/%r/%h/out.%R",
+                    script_file.name,
+                ]
+
+            _vlog(f"  [mpiexec] {shlex.join(mpi_cmd)}")
+            subprocess.Popen(mpi_cmd, env=os.environ)
+
             instance_idx += 1
-            node_offset += 1
 
-    # One mpiexec per model config, each with its own hostfile.
-    # This supports multiple models with different scripts running concurrently.
-    model_nodes: dict[str, list[str]] = {}
-    for node, script, _ in all_instance_nodes:
-        model_nodes.setdefault(script, []).append(node)
-
-    for script, nodes_for_model in model_nodes.items():
-        hostfile = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".hosts", prefix="aegis_hosts_",
-            dir=shared_tmpdir, delete=False,
+        # Advance node_offset by the nodes consumed by this model
+        node_offset += math.ceil(
+            model_cfg.instances * model_cfg.tensor_parallel_size / GPUS_PER_NODE
         )
-        for node in nodes_for_model:
-            hostfile.write(f"{node}\n")
-        hostfile.close()
-        tmp_files.append(hostfile.name)
-
-        mpi_launch_cmd = [
-            "mpiexec", "-ppn", "1",
-            "--hostfile", hostfile.name,
-            "-o", f"{log_dir}/%r/%h/out.%R",
-            script,
-        ]
-        _vlog(f"  [mpiexec] {shlex.join(mpi_launch_cmd)}")
-        subprocess.Popen(mpi_launch_cmd, env=os.environ)
 
     total_instances = instance_idx
     t_wait_start = time.monotonic()
