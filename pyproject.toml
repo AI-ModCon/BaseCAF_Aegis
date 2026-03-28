@@ -8,11 +8,14 @@ version = "0.1.0"
 description = "HPC LLM Instance Launcher"
 readme = "README.md"
 requires-python = ">=3.9"
-license = "MIT"
 dependencies = [
     "pyyaml",
     "jinja2",
     "huggingface_hub",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
 ]
 
 [project.scripts]
