@@ -10,6 +10,7 @@
 #PBS -j oe
 
 cd "$PBS_O_WORKDIR"
+mkdir -p {{ run_dir }}
 
 {% if config.aegis_env %}
 module load miniforge3
@@ -37,10 +38,10 @@ if [ -z "${HF_TOKEN:-}" ]; then
 fi
 
 # --- WRITE CONFIG AND LAUNCH INSTANCES ---
-cat > ${PBS_O_WORKDIR}/.aegis_config.yaml << 'AEGIS_CONFIG_EOF'
+cat > {{ run_dir }}/.aegis_config.yaml << 'AEGIS_CONFIG_EOF'
 {{ config_yaml }}AEGIS_CONFIG_EOF
 
-aegis launch --config ${PBS_O_WORKDIR}/.aegis_config.yaml
+aegis launch --config {{ run_dir }}/.aegis_config.yaml
 
 {% if config.bench %}
 echo "Running benchmark..."

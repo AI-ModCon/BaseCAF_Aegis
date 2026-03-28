@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -33,23 +34,42 @@ def _get_template_env() -> Environment:
     )
 
 
-def generate_pbs_script(config: AegisConfig) -> str:
+def make_run_dir(base: str | Path = ".") -> Path:
+    """Create and return a timestamped run directory under *base*/local_runs/."""
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = Path(base) / "local_runs" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir
+
+
+def generate_pbs_script(config: AegisConfig, run_dir: str | Path | None = None) -> str:
     """Render the PBS batch script from the Jinja2 template."""
     env = _get_template_env()
     template = env.get_template("pbs_job.sh.j2")
     config_yaml = config_to_yaml(config)
-    return template.render(config=config, config_yaml=config_yaml)
+    return template.render(
+        config=config,
+        config_yaml=config_yaml,
+        run_dir=str(run_dir) if run_dir else "local_runs",
+    )
 
 
-def submit_job(script: str, hf_token: str | None = None) -> str:
+def submit_job(
+    script: str,
+    hf_token: str | None = None,
+    run_dir: str | Path | None = None,
+) -> str:
     """Write the PBS script to a temp file and submit via qsub. Returns the job ID."""
+    out_dir = Path(run_dir) if run_dir else Path("local_runs")
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".pbs", prefix="aegis_", delete=False
     ) as f:
         f.write(script)
         script_path = f.name
 
-    qsub_cmd = ["qsub"]
+    qsub_cmd = ["qsub", "-o", f"{out_dir}/"]
     if hf_token:
         qsub_cmd += ["-v", "HF_TOKEN"]
     qsub_cmd.append(script_path)

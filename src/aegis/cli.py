@@ -17,6 +17,7 @@ from .registry import ServiceRegistryClient, ServiceStatus
 from .scheduler import (
     SSHConnection,
     generate_pbs_script,
+    make_run_dir,
     submit_job,
     submit_job_remote,
     wait_for_endpoints,
@@ -152,7 +153,10 @@ def cmd_submit(args) -> None:
         if config.aegis_env:
             print(f"Using running conda environment for job: {config.aegis_env}", file=sys.stderr)
 
-    script = generate_pbs_script(config)
+    run_dir = make_run_dir(os.getcwd())
+    config.endpoints_file = str(run_dir / "aegis_endpoints.txt")
+
+    script = generate_pbs_script(config, run_dir=run_dir)
 
     if args.dry_run:
         print(script)
@@ -167,19 +171,10 @@ def cmd_submit(args) -> None:
         ssh.connect()
 
     try:
-        # Remove stale endpoints and registry files so --wait doesn't find them immediately
-        if args.wait:
-            registry_file = str(Path(config.endpoints_file).parent / "aegis_registry_url.txt")
-            if ssh:
-                ssh.run(f"rm -f {config.endpoints_file} {registry_file}")
-            else:
-                Path(config.endpoints_file).unlink(missing_ok=True)
-                Path(registry_file).unlink(missing_ok=True)
-
         if ssh:
             job_id = submit_job_remote(script, ssh, hf_token=hf_token)
         else:
-            job_id = submit_job(script, hf_token=hf_token)
+            job_id = submit_job(script, hf_token=hf_token, run_dir=run_dir)
 
         if args.wait:
             wait_for_endpoints(config.endpoints_file, job_id, ssh=ssh)

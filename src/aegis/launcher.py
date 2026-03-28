@@ -321,9 +321,11 @@ def launch_instances(
     log_dir = Path(os.environ.get("TMPDIR", "/tmp")) / "aegis-logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write temp files to the shared filesystem so remote nodes can access them.
-    # PBS sets TMPDIR to a node-local path, so we use PBS_O_WORKDIR instead.
-    shared_tmpdir = os.environ.get("PBS_O_WORKDIR", None)
+    # Write temp files into the same run directory as the endpoints file so all
+    # per-run artifacts are co-located. endpoints_file is an absolute path that
+    # already embeds the timestamped run_id (e.g. local_runs/20250328_192000/).
+    shared_tmpdir = str(Path(config.endpoints_file).resolve().parent)
+    os.makedirs(shared_tmpdir, exist_ok=True)
 
     env = _get_template_env()
     template = env.get_template("instance.sh.j2")
@@ -475,6 +477,18 @@ def launch_instances(
     with open(endpoints_file, "w") as f:
         for node, port in healthy:
             f.write(f"{node}:{port}\n")
+
+    # Update the 'latest' symlinks in the parent local_runs/ directory so that
+    # configs pointing to local_runs/aegis_endpoints.txt always resolve to the
+    # most recently completed run without needing any path changes.
+    _run_dir = endpoints_file.parent
+    _local_runs = _run_dir.parent
+    if _local_runs.name == "local_runs":
+        for _fname in ("aegis_endpoints.txt", "aegis_registry_url.txt"):
+            if (_run_dir / _fname).exists():
+                _link = _local_runs / _fname
+                _link.unlink(missing_ok=True)
+                _link.symlink_to(Path(_run_dir.name) / _fname)
 
     total_wait = time.monotonic() - t_wait_start
     total_staging = sum(staging_times.values()) if staging_times else 0.0

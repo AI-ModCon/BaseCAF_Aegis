@@ -70,7 +70,7 @@ class AegisConfig:
     aegis_env: Optional[str] = None
 
     # Output path for the endpoints file
-    endpoints_file: str = "aegis_endpoints.txt"
+    endpoints_file: str = "local_runs/aegis_endpoints.txt"
 
     # Benchmark settings (used when --bench is passed to aegis submit)
     bench: bool = False
