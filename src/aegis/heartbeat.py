@@ -58,9 +58,13 @@ if __name__ == "__main__":
 
     registry_port = int(sys.argv[2])
     _endpoints: list[tuple[str, str, int]] = []
+    _endpoint_models: dict[tuple[str, int], str] = {}
     for arg in sys.argv[3:]:
-        svc_id, host, port_str = arg.split(":")
+        parts = arg.split(":", 3)
+        svc_id, host, port_str = parts[0], parts[1], parts[2]
+        model = parts[3] if len(parts) > 3 else ""
         _endpoints.append((svc_id, host, int(port_str)))
+        _endpoint_models[(host, int(port_str))] = model
 
     # Create in-memory registry and register all instances as STARTING
     _registry = InMemoryRegistry()
@@ -71,6 +75,7 @@ if __name__ == "__main__":
             port=port,
             service_type="vllm",
             status=ServiceStatus.STARTING.value,
+            metadata={"model": _endpoint_models[(host, port)]},
         )
         _registry.register_service(info)
 

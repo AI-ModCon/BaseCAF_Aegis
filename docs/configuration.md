@@ -57,7 +57,7 @@ models:
 | `conda_env` | `str` | `None` | Path to a conda-pack tarball to distribute and activate on all nodes. |
 | `registry_port` | `int` | `8471` | Port for the in-process service registry HTTP API. |
 | `startup_timeout` | `int` | `600` | Seconds to wait for instances to become healthy. |
-| `aegis_env` | `str` | `None` | Path to a conda environment containing the aegis package. Used by `submit` to activate the environment in the PBS script. |
+| `aegis_env` | `str` | `None` | Path to a conda environment containing the aegis package. Used by `submit` to activate the environment in the PBS script. If not set, `aegis submit` automatically detects the active conda environment it is running in. |
 | `endpoints_file` | `str` | `aegis_endpoints.txt` | Output path for the file listing healthy instance endpoints. |
 | `models` | `list` | `[]` | List of per-model configurations (see below). |
 

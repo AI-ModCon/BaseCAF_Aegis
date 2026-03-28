@@ -139,6 +139,19 @@ def cmd_submit(args) -> None:
 
     _check_gated_models(config)
 
+    if not config.aegis_env:
+        # Infer the conda env from the running Python process so the submitted
+        # job uses the same aegis installation without requiring aegis_env in config.
+        _conda_prefix = os.environ.get("CONDA_PREFIX")
+        if _conda_prefix and (Path(_conda_prefix) / "conda-meta").is_dir():
+            config.aegis_env = _conda_prefix
+        else:
+            _prefix = Path(sys.executable).parent.parent
+            if (_prefix / "conda-meta").is_dir():
+                config.aegis_env = str(_prefix)
+        if config.aegis_env:
+            print(f"Using running conda environment for job: {config.aegis_env}", file=sys.stderr)
+
     script = generate_pbs_script(config)
 
     if args.dry_run:
@@ -185,13 +198,20 @@ def cmd_launch(args) -> None:
 
     _check_gated_models(config)
 
+    staging_times: dict[str, float] = {}
     if not args.skip_staging:
-        stage_conda_env(config)
-        stage_apptainer_image(config)
-        stage_weights(config)
+        t = stage_conda_env(config)
+        if t is not None:
+            staging_times["conda_env"] = t
+        t = stage_apptainer_image(config)
+        if t is not None:
+            staging_times["apptainer_image"] = t
+        t = stage_weights(config)
+        if t is not None:
+            staging_times["weights"] = t
     else:
         print("Skipping conda env and weight staging (--skip-staging)", file=sys.stderr)
-    launch_instances(config)
+    launch_instances(config, staging_times=staging_times or None)
 
 
 # ---------------------------------------------------------------------------
@@ -204,21 +224,25 @@ def _format_services(services, fmt: str) -> str:
         return json.dumps([s.to_dict() for s in services], indent=2)
     lines = []
     for s in services:
-        lines.append(f"{s.service_id}  {s.host}:{s.port}  {s.status}  last_seen={s.last_seen:.1f}")
+        model = s.metadata.get("model", "") if s.metadata else ""
+        model_str = f"  {model}" if model else ""
+        lines.append(f"{s.service_id}  {s.host}:{s.port}  {s.status}  last_seen={s.last_seen:.1f}{model_str}")
     return "\n".join(lines) if lines else "(no services)"
 
 
 def cmd_registry_list(args) -> None:
-    client = ServiceRegistryClient(host=args.registry_host, port=args.registry_port)
+    client = _registry_client(args)
     services = client.list_services(
         service_type=args.type,
         status_filter=args.status,
     )
+    if args.model:
+        services = [s for s in services if s.metadata.get("model") == args.model]
     print(_format_services(services, args.format))
 
 
 def cmd_registry_get(args) -> None:
-    client = ServiceRegistryClient(host=args.registry_host, port=args.registry_port)
+    client = _registry_client(args)
     service = client.get_service(args.service_id)
     if service is None:
         print(f"Service '{args.service_id}' not found.", file=sys.stderr)
@@ -230,22 +254,28 @@ def cmd_registry_get(args) -> None:
 
 
 def cmd_registry_list_healthy(args) -> None:
-    client = ServiceRegistryClient(host=args.registry_host, port=args.registry_port)
+    client = _registry_client(args)
     services = client.get_healthy_services(
         service_type=args.type,
         timeout_seconds=args.timeout,
     )
+    if args.model:
+        services = [s for s in services if s.metadata.get("model") == args.model]
     print(_format_services(services, args.format))
 
 
 def cmd_registry_count(args) -> None:
-    client = ServiceRegistryClient(host=args.registry_host, port=args.registry_port)
+    client = _registry_client(args)
     count = client.get_service_count(service_type=args.type)
     print(count)
 
 
 def _add_registry_args(parser: argparse.ArgumentParser) -> None:
-    """Add --registry-host and --registry-port to a registry sub-parser."""
+    """Add --registry-url / --registry-host / --registry-port to a registry sub-parser."""
+    parser.add_argument(
+        "--registry-url", type=str, default=None,
+        help="Registry URL, e.g. http://node01:8471 (overrides --registry-host/--registry-port)",
+    )
     parser.add_argument(
         "--registry-host", type=str, default="localhost",
         help="Hostname of the registry server, typically the first PBS node (default: localhost)",
@@ -258,6 +288,15 @@ def _add_registry_args(parser: argparse.ArgumentParser) -> None:
         "--format", choices=["text", "json"], default="text",
         help="Output format (default: text)",
     )
+
+
+def _registry_client(args) -> ServiceRegistryClient:
+    """Build a ServiceRegistryClient from --registry-url or --registry-host/--registry-port."""
+    if getattr(args, "registry_url", None):
+        from urllib.parse import urlparse
+        parsed = urlparse(args.registry_url)
+        return ServiceRegistryClient(host=parsed.hostname, port=parsed.port)
+    return ServiceRegistryClient(host=args.registry_host, port=args.registry_port)
 
 
 # ---------------------------------------------------------------------------
@@ -296,8 +335,8 @@ def _parse_bench_results(result_dir: str) -> list[dict]:
 def cmd_bench(args) -> None:
     """Benchmark launched vLLM instances via vllm bench serve."""
     # Resolve endpoints
-    if args.registry_host != "localhost":
-        client = ServiceRegistryClient(host=args.registry_host, port=args.registry_port)
+    if getattr(args, "registry_url", None) or args.registry_host != "localhost":
+        client = _registry_client(args)
         services = client.get_healthy_services()
         endpoints = [f"{s.host}:{s.port}" for s in services]
         if not endpoints:
@@ -334,12 +373,23 @@ def cmd_bench(args) -> None:
     hf_token = os.environ.get("HF_TOKEN")
 
     # Build mpiexec command: SPMD per port group, MPMD across groups
+    # Write each group's hosts to a temp hostfile (one host per line) to avoid
+    # ARG_MAX errors when the host list is large (e.g. 4096 instances).
     mpi_cmd: list[str] = ["mpiexec", "--no-abort-on-failure"]
+    hostfiles: list[tempfile.NamedTemporaryFile] = []
     first = True
     for port, hosts in hosts_by_port.items():
         if not first:
             mpi_cmd.append(":")
         first = False
+        hf = tempfile.NamedTemporaryFile(
+            mode="w", prefix="aegis_bench_hosts_", suffix=".txt",
+            dir=bench_base, delete=False,
+        )
+        hf.write("\n".join(hosts) + "\n")
+        hf.flush()
+        hf.close()
+        hostfiles.append(hf)
         vllm_args = [
             "vllm", "bench", "serve",
             "--model", args.model,
@@ -354,22 +404,22 @@ def cmd_bench(args) -> None:
         if args.conda_env:
             env_export = f"export HF_TOKEN={shlex.quote(hf_token)}" if hf_token else ""
             activate = f"source {args.conda_env}/bin/activate"
-            parts = [p for p in [activate, env_export, cmd_str] if p]
+            parts = [p for p in [activate, env_export, "export HF_HUB_OFFLINE=1", cmd_str] if p]
             rank_cmd = ["bash", "-c", " && ".join(parts)]
         elif args.apptainer_image:
             image_basename = os.path.basename(args.apptainer_image)
             env_export = f"export HF_TOKEN={shlex.quote(hf_token)}" if hf_token else ""
             apptainer_cmd = f"apptainer exec /tmp/{image_basename} {cmd_str}"
-            parts = [p for p in [env_export, apptainer_cmd] if p]
+            parts = [p for p in [env_export, "export HF_HUB_OFFLINE=1", apptainer_cmd] if p]
             rank_cmd = ["bash", "-c", " && ".join(parts)]
         else:
             env_export = f"export HF_TOKEN={shlex.quote(hf_token)}" if hf_token else ""
-            parts = [p for p in ["module load frameworks", env_export, cmd_str] if p]
+            parts = [p for p in ["module load frameworks", env_export, "export HF_HUB_OFFLINE=1", cmd_str] if p]
             rank_cmd = ["bash", "-l", "-c", " && ".join(parts)]
         env_flags = ["-env", "HF_TOKEN", hf_token] if hf_token else []
         mpi_cmd.extend([
             "-n", str(len(hosts)),
-            "-hosts", ",".join(hosts),
+            "--hostfile", hf.name,
             *env_flags,
             *rank_cmd,
         ])
@@ -400,6 +450,11 @@ def cmd_bench(args) -> None:
             print("Warning: no benchmark result files found.", file=sys.stderr)
     finally:
         shutil.rmtree(result_dir, ignore_errors=True)
+        for hf in hostfiles:
+            try:
+                os.unlink(hf.name)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +578,7 @@ def main(argv: list[str] | None = None) -> None:
     _add_registry_args(reg_list)
     reg_list.add_argument("--type", type=str, default=None, help="Filter by service type")
     reg_list.add_argument("--status", type=str, default=None, help="Filter by status")
+    reg_list.add_argument("--model", type=str, default=None, help="Filter by model name")
     reg_list.set_defaults(func=cmd_registry_list)
 
     # registry get
@@ -536,6 +592,7 @@ def main(argv: list[str] | None = None) -> None:
     _add_registry_args(reg_healthy)
     reg_healthy.add_argument("--type", type=str, default=None, help="Filter by service type")
     reg_healthy.add_argument("--timeout", type=int, default=30, help="Heartbeat timeout in seconds")
+    reg_healthy.add_argument("--model", type=str, default=None, help="Filter by model name")
     reg_healthy.set_defaults(func=cmd_registry_list_healthy)
 
     # registry count

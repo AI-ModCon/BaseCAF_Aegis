@@ -80,10 +80,13 @@ def _ensure_bcast() -> Path:
     return bcast_bin
 
 
-def stage_conda_env(config: AegisConfig) -> None:
-    """Compile bcast (if needed) and broadcast a conda-pack tarball to all nodes."""
+def stage_conda_env(config: AegisConfig) -> float | None:
+    """Compile bcast (if needed) and broadcast a conda-pack tarball to all nodes.
+
+    Returns the elapsed time in seconds, or None if staging was skipped.
+    """
     if not config.conda_env:
-        return
+        return None
 
     bcast_bin = _ensure_bcast()
 
@@ -96,18 +99,23 @@ def stage_conda_env(config: AegisConfig) -> None:
 
     cmd = ["mpiexec", "-ppn", "1", "--cpu-bind", "numa", str(bcast_bin), tarball, "/tmp"]
     _vlog(f"  [conda-stage] {shlex.join(cmd)}")
+    t0 = time.monotonic()
     result = subprocess.run(cmd, env=env)
     if result.returncode != 0:
         print("Conda env staging failed.", file=sys.stderr)
         sys.exit(1)
+    elapsed = time.monotonic() - t0
+    print(f"Conda env staging complete ({elapsed:.1f}s).", file=sys.stderr)
+    return elapsed
 
-    print("Conda env staging complete.", file=sys.stderr)
 
+def stage_apptainer_image(config: AegisConfig) -> float | None:
+    """Compile bcast (if needed) and broadcast an Apptainer image to all nodes.
 
-def stage_apptainer_image(config: AegisConfig) -> None:
-    """Compile bcast (if needed) and broadcast an Apptainer image to all nodes."""
+    Returns the elapsed time in seconds, or None if staging was skipped.
+    """
     if not config.apptainer_image:
-        return
+        return None
 
     bcast_bin = _ensure_bcast()
     image = config.apptainer_image
@@ -119,12 +127,14 @@ def stage_apptainer_image(config: AegisConfig) -> None:
 
     cmd = ["mpiexec", "-ppn", "1", "--cpu-bind", "numa", str(bcast_bin), image, "/tmp"]
     _vlog(f"  [apptainer-stage] {shlex.join(cmd)}")
+    t0 = time.monotonic()
     result = subprocess.run(cmd, env=env)
     if result.returncode != 0:
         print("Apptainer image staging failed.", file=sys.stderr)
         sys.exit(1)
-
-    print("Apptainer image staging complete.", file=sys.stderr)
+    elapsed = time.monotonic() - t0
+    print(f"Apptainer image staging complete ({elapsed:.1f}s).", file=sys.stderr)
+    return elapsed
 
 
 def _download_hf_weights(config: AegisConfig) -> None:
@@ -174,13 +184,16 @@ def _download_hf_weights(config: AegisConfig) -> None:
             m.model_source = downloaded_path
 
 
-def stage_weights(config: AegisConfig) -> None:
-    """Compile bcast (if needed) and broadcast model weights to local storage."""
+def stage_weights(config: AegisConfig) -> float | None:
+    """Compile bcast (if needed) and broadcast model weights to local storage.
+
+    Returns the total elapsed time in seconds, or None if staging was skipped.
+    """
     _download_hf_weights(config)
 
     if not any(m.model_source for m in config.models):
         print("No model_source specified, skipping weight staging.", file=sys.stderr)
-        return
+        return None
 
     bcast_bin = _ensure_bcast()
 
@@ -189,6 +202,7 @@ def stage_weights(config: AegisConfig) -> None:
     env["MPIR_CVAR_CH4_OFI_ENABLE_MULTI_NIC_STRIPING"] = "1"
     env["MPIR_CVAR_CH4_OFI_MAX_NICS"] = "4"
 
+    t_total = time.monotonic()
     for m in config.models:
         if not m.model_source:
             continue
@@ -199,12 +213,17 @@ def stage_weights(config: AegisConfig) -> None:
         bcast_cmd.extend([source, dest])
         print(f"Staging weights: {source} -> {dest}", file=sys.stderr)
         _vlog(f"  [weight-stage] {shlex.join(bcast_cmd)}")
+        t0 = time.monotonic()
         result = subprocess.run(bcast_cmd, env=env)
         if result.returncode != 0:
             print(f"Weight staging failed for {source}.", file=sys.stderr)
             sys.exit(1)
+        elapsed = time.monotonic() - t0
+        print(f"Weight staging complete for {source} ({elapsed:.1f}s).", file=sys.stderr)
 
-    print("Weight staging complete.", file=sys.stderr)
+    total_elapsed = time.monotonic() - t_total
+    print("All weight staging complete.", file=sys.stderr)
+    return total_elapsed
 
 
 def _wait_for_instances(
@@ -219,11 +238,14 @@ def _wait_for_instances(
     # Bypass http_proxy env vars — health checks target internal compute nodes.
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     ready = set()
-    deadline = time.monotonic() + timeout
+    ready_times: dict[tuple[str, int], float] = {}
+    start = time.monotonic()
+    deadline = start + timeout
     cycle = 0
 
     while time.monotonic() < deadline:
         cycle += 1
+        newly_ready = []
         for node, port in endpoints:
             if (node, port) in ready:
                 continue
@@ -231,22 +253,31 @@ def _wait_for_instances(
             try:
                 with opener.open(url, timeout=5) as resp:
                     if resp.status == 200:
+                        elapsed = time.monotonic() - start
                         ready.add((node, port))
-                        print(
-                            f"Instance {node}:{port} is ready "
-                            f"({len(ready)}/{len(endpoints)})",
-                            file=sys.stderr,
-                        )
+                        ready_times[(node, port)] = elapsed
+                        newly_ready.append((node, port, elapsed))
             except (urllib.error.URLError, OSError) as exc:
                 reason = getattr(exc, "reason", exc)
-                print(
-                    f"[poll {cycle}] {node}:{port} not ready: {reason}",
-                    file=sys.stderr,
-                )
+                _vlog(f"  [poll {cycle}] {node}:{port} not ready: {reason}")
+
+        for node, port, elapsed in newly_ready:
+            print(
+                f"Instance {node}:{port} ready in {elapsed:.1f}s "
+                f"({len(ready)}/{len(endpoints)})",
+                file=sys.stderr,
+            )
 
         if len(ready) == len(endpoints):
             break
 
+        pending = len(endpoints) - len(ready)
+        elapsed_total = time.monotonic() - start
+        print(
+            f"[poll {cycle}] {len(ready)}/{len(endpoints)} ready, "
+            f"{pending} pending ({elapsed_total:.0f}s elapsed)",
+            file=sys.stderr,
+        )
         time.sleep(poll_interval)
 
     not_ready = [(n, p) for n, p in endpoints if (n, p) not in ready]
@@ -257,10 +288,24 @@ def _wait_for_instances(
             file=sys.stderr,
         )
 
+    if ready_times:
+        print("Instance startup times:", file=sys.stderr)
+        for node, port in endpoints:
+            if (node, port) in ready_times:
+                print(f"  {node}:{port}  {ready_times[(node, port)]:.1f}s", file=sys.stderr)
+            else:
+                print(f"  {node}:{port}  timed out", file=sys.stderr)
+        times = list(ready_times.values())
+        avg = sum(times) / len(times)
+        print(f"  Average: {avg:.1f}s (min {min(times):.1f}s, max {max(times):.1f}s)", file=sys.stderr)
+
     return [(n, p) for n, p in endpoints if (n, p) in ready]
 
 
-def launch_instances(config: AegisConfig) -> None:
+def launch_instances(
+    config: AegisConfig,
+    staging_times: dict[str, float] | None = None,
+) -> None:
     """Launch vLLM instances across allocated nodes."""
     nodes = _get_allocated_nodes()
     total_nodes_needed = config.nodes_needed
@@ -283,96 +328,73 @@ def launch_instances(config: AegisConfig) -> None:
     env = _get_template_env()
     template = env.get_template("instance.sh.j2")
 
-    processes = []
     endpoints = []
+    endpoint_models: dict[tuple[str, int], str] = {}
     tmp_files = []
-    node_port_counter: dict[str, int] = {}
     instance_idx = 0
     node_offset = 0
+    all_instance_nodes = []
 
     for model_cfg in config.models:
-        npi = model_cfg.nodes_per_instance   # ceil(TP/12); ≥1
-        iph = model_cfg.instances_per_node   # 12//TP when TP<12; else 1
+        port = config.port_start
+        script_content = template.render(
+            model=model_cfg.model,
+            tensor_parallel_size=model_cfg.tensor_parallel_size,
+            port=port,
+            hf_home=config.hf_home,
+            extra_vllm_args=model_cfg.extra_vllm_args,
+            conda_env=config.conda_env,
+            apptainer_image=config.apptainer_image,
+            modelinfo_cache_script=str(
+                _project_root() / "tools" / "vllm_build_all_modelinfo_caches.py"
+            ),
+        )
+        script_file = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".sh", prefix=f"aegis_model_{model_cfg.model.replace('/', '_')}_",
+            dir=shared_tmpdir, delete=False,
+        )
+        script_file.write(script_content)
+        script_file.close()
+        os.chmod(script_file.name, 0o755)
+        tmp_files.append(script_file.name)
 
         for j in range(model_cfg.instances):
-            if npi > 1:
-                # Large TP: one instance spans multiple nodes
-                node_start = node_offset + j * npi
-                instance_nodes = nodes[node_start : node_start + npi]
-                ze_affinity_mask = None  # use all GPUs on every node
-            else:
-                # Small TP: pack iph instances per node
-                node_idx = node_offset + (j // iph)
-                slot_idx = j % iph
-                instance_nodes = [nodes[node_idx]]
-                gpu_start = slot_idx * model_cfg.tensor_parallel_size
-                ze_affinity_mask = ",".join(
-                    str(i) for i in range(gpu_start, gpu_start + model_cfg.tensor_parallel_size)
-                )
-
-            head_node = instance_nodes[0]
-            port = config.port_start + node_port_counter.get(head_node, 0)
-            node_port_counter[head_node] = node_port_counter.get(head_node, 0) + 1
-            endpoints.append((head_node, port))
-
-            # Render the per-instance script
-            script_content = template.render(
-                model=model_cfg.model,
-                tensor_parallel_size=model_cfg.tensor_parallel_size,
-                port=port,
-                hf_home=config.hf_home,
-                extra_vllm_args=model_cfg.extra_vllm_args,
-                conda_env=config.conda_env,
-                apptainer_image=config.apptainer_image,
-                ze_affinity_mask=ze_affinity_mask,
-            )
-
-            # Write to a temp file on the shared filesystem
-            script_file = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".sh", prefix=f"aegis_instance_{instance_idx}_",
-                dir=shared_tmpdir, delete=False,
-            )
-            script_file.write(script_content)
-            script_file.close()
-            os.chmod(script_file.name, 0o755)
-            tmp_files.append(script_file.name)
-
-            # Build hostfile for this instance's nodes
-            hostfile = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".hosts", prefix=f"aegis_hosts_{instance_idx}_",
-                dir=shared_tmpdir, delete=False,
-            )
-            for node in instance_nodes:
-                hostfile.write(f"{node}\n")
-            hostfile.close()
-            tmp_files.append(hostfile.name)
-
-            print(
-                f"Launching instance {instance_idx} ({model_cfg.model}): "
-                f"nodes={instance_nodes}, port={port}"
-                + (f", gpus={ze_affinity_mask}" if ze_affinity_mask else ""),
-                file=sys.stderr,
-            )
-            _vlog(f"  [instance {instance_idx}] script: {script_file.name}")
-
-            mpi_launch_cmd = [
-                "mpiexec", "-ppn", "1",
-                "--hostfile", hostfile.name,
-                "-o", f"{log_dir}/{instance_idx}/%h/out.%R",
-                script_file.name,
-            ]
-            _vlog(f"  [instance {instance_idx}] {shlex.join(mpi_launch_cmd)}")
-            proc = subprocess.Popen(mpi_launch_cmd, env=os.environ)
-            processes.append(proc)
+            node = nodes[node_offset]
+            endpoints.append((node, port))
+            endpoint_models[(node, port)] = model_cfg.model
+            all_instance_nodes.append((node, script_file.name, instance_idx))
+            _vlog(f"  [instance {instance_idx}] {model_cfg.model} node={node} port={port}")
             instance_idx += 1
+            node_offset += 1
 
-        # Advance node_offset by nodes consumed by this model
-        node_offset += math.ceil(
-            model_cfg.instances * model_cfg.tensor_parallel_size / GPUS_PER_NODE
+    # One mpiexec per model config, each with its own hostfile.
+    # This supports multiple models with different scripts running concurrently.
+    model_nodes: dict[str, list[str]] = {}
+    for node, script, _ in all_instance_nodes:
+        model_nodes.setdefault(script, []).append(node)
+
+    for script, nodes_for_model in model_nodes.items():
+        hostfile = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".hosts", prefix="aegis_hosts_",
+            dir=shared_tmpdir, delete=False,
         )
+        for node in nodes_for_model:
+            hostfile.write(f"{node}\n")
+        hostfile.close()
+        tmp_files.append(hostfile.name)
+
+        mpi_launch_cmd = [
+            "mpiexec", "-ppn", "1",
+            "--hostfile", hostfile.name,
+            "-o", f"{log_dir}/%r/%h/out.%R",
+            script,
+        ]
+        _vlog(f"  [mpiexec] {shlex.join(mpi_launch_cmd)}")
+        subprocess.Popen(mpi_launch_cmd, env=os.environ)
 
     total_instances = instance_idx
-    print(f"All {total_instances} instance(s) launched. Waiting for health checks...", file=sys.stderr)
+    t_wait_start = time.monotonic()
+    print(f"Launched {total_instances} instance(s), waiting for health checks...", file=sys.stderr)
 
     # Spawn the heartbeat process which creates the in-memory registry,
     # registers all instances as STARTING, and serves the HTTP query API.
@@ -382,7 +404,8 @@ def launch_instances(config: AegisConfig) -> None:
         "--registry-port", str(config.registry_port),
     ]
     for node, port in endpoints:
-        heartbeat_args.append(f"vllm-{node}-{port}:{node}:{port}")
+        model = endpoint_models[(node, port)]
+        heartbeat_args.append(f"vllm-{node}-{port}:{node}:{port}:{model}")
 
     heartbeat_log = open(log_dir / "heartbeat.log", "w")
     _vlog(f"  [heartbeat] {shlex.join(heartbeat_args)}")
@@ -392,9 +415,10 @@ def launch_instances(config: AegisConfig) -> None:
         stdout=heartbeat_log,
         stderr=heartbeat_log,
     )
-    print(f"Started heartbeat monitor for {len(endpoints)} instance(s)", file=sys.stderr)
-    print(f"Service registry: http://{head_node}:{config.registry_port}", file=sys.stderr)
-    print(f"Logs: {log_dir}", file=sys.stderr)
+    print(
+        f"Heartbeat monitor started. Registry: http://{head_node}:{config.registry_port}  Logs: {log_dir}",
+        file=sys.stderr,
+    )
 
     # Write the registry URL sidecar file early so the submit side can find it
     # as soon as the registry is available, even before instances are healthy.
@@ -421,8 +445,21 @@ def launch_instances(config: AegisConfig) -> None:
         for node, port in healthy:
             f.write(f"{node}:{port}\n")
 
+    total_wait = time.monotonic() - t_wait_start
+    total_staging = sum(staging_times.values()) if staging_times else 0.0
+
+    if staging_times:
+        print("Staging times:", file=sys.stderr)
+        labels = {"conda_env": "conda env", "apptainer_image": "apptainer image", "weights": "weights"}
+        for key, label in labels.items():
+            t = staging_times.get(key)
+            if t is not None:
+                print(f"  {label + ':':<20} {t:.1f}s", file=sys.stderr)
+        print(f"  {'total:':<20} {total_staging:.1f}s", file=sys.stderr)
+
     print(
-        f"{len(healthy)}/{total_instances} instance(s) are healthy.",
+        f"{len(healthy)}/{total_instances} instance(s) are healthy "
+        f"(total wait: {total_wait + total_staging:.1f}s).",
         file=sys.stderr,
     )
     print(f"Endpoints written to {endpoints_file.resolve()}", file=sys.stderr)
