@@ -12,38 +12,26 @@ module load pti-gpu
 module load hdf5
 
 {% if conda_env %}
-# Serialize conda env extraction across all instances on this node.
-# Without the lock, concurrent tar invocations overwrite each other's files
-# mid-extraction, corrupting tokenizer binaries and causing vLLM panics.
+# Serialize conda env extraction AND unpacking across all instances on this
+# node.  tar and conda-unpack both rewrite files in-place; running either
+# concurrently from multiple instances corrupts shared files (e.g. tokenizer
+# vocab), producing "invalid tiktoken vocab file" errors at scale.
 (
   flock 9
   if [ ! -f /tmp/conda_env/.setup_complete ]; then
     mkdir -p /tmp/conda_env
     tar -xzf /tmp/{{ conda_env.split('/')[-1] }} -C /tmp/conda_env
+    /tmp/conda_env/bin/conda-unpack
     touch /tmp/conda_env/.setup_complete
   fi
 ) 9>/tmp/conda_env.lock
 set --
 source /tmp/conda_env/bin/activate
-conda-unpack
 export LD_LIBRARY_PATH=/tmp/conda_env/lib/python3.12/site-packages/intel_extension_for_pytorch/lib:/tmp/conda_env/lib:/tmp/conda_env/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}:/usr/lib64
 export ZE_FLAT_DEVICE_HIERARCHY=FLAT
 unset ONEAPI_DEVICE_SELECTOR
 {% if ze_affinity_mask %}export ZE_AFFINITY_MASK="{{ ze_affinity_mask }}"
 {% endif %}
-# Pre-warm harmony/tiktoken encoding cache (serialized per node) so that
-# concurrent API-server workers never race to write the same vocab file.
-export TIKTOKEN_CACHE_DIR=/tmp/tiktoken_cache
-(
-  flock 200
-  if [ ! -f /tmp/tiktoken_cache/.setup_complete ]; then
-    mkdir -p /tmp/tiktoken_cache
-    python -c "
-from openai_harmony import load_harmony_encoding, HarmonyEncodingName
-load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
-" 2>/dev/null && touch /tmp/tiktoken_cache/.setup_complete || true
-  fi
-) 200>/tmp/tiktoken_cache.lock
 export CCL_PROCESS_LAUNCHER=None
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export FI_MR_CACHE_MONITOR=userfaultfd

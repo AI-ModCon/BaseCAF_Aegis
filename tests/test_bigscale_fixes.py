@@ -1,11 +1,10 @@
 """Tests for the two bigscale fixes:
   1. _popen_with_retry — retries on EAGAIN instead of crashing.
-  2. instance.sh.j2 template — includes the tiktoken cache pre-warm block.
+  2. instance.sh.j2 template — conda-unpack is inside the flock so concurrent
+     instances on the same node cannot corrupt shared tokenizer files.
 """
 import errno
 import subprocess
-import textwrap
-from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -40,9 +39,7 @@ class TestPopenWithRetry:
             result = _popen_with_retry(["echo", "hi"])
 
         assert mock_popen.call_count == 3
-        # Two sleeps before the successful attempt
         assert mock_sleep.call_count == 2
-        # Sleep durations double each time
         assert mock_sleep.call_args_list[0] == call(_POPEN_RETRY_BASE * 1)
         assert mock_sleep.call_args_list[1] == call(_POPEN_RETRY_BASE * 2)
         assert result is proc
@@ -55,8 +52,6 @@ class TestPopenWithRetry:
         assert exc_info.value.errno == errno.EAGAIN
 
     def test_non_eagain_oserror_reraises_immediately(self):
-        # ENFILE (too many open files in system) is an OSError that must not
-        # be retried — only EAGAIN (fork limit) gets the backoff treatment.
         err = OSError(errno.ENFILE, "too many open files")
         with patch("aegis.launcher.subprocess.Popen", side_effect=err), \
              patch("aegis.launcher.time.sleep") as mock_sleep:
@@ -73,22 +68,18 @@ class TestPopenWithRetry:
         mock_sleep.assert_not_called()
 
     def test_max_retries_count_is_reasonable(self):
-        # Enough retries to outlast a transient spike (>3) but not forever.
         assert 4 <= _POPEN_MAX_RETRIES <= 16
 
     def test_total_wait_covers_meaningful_backoff(self):
-        # Sum of all wait intervals should be at least a few seconds so the
-        # system has time to free process slots between fork attempts.
         total = sum(_POPEN_RETRY_BASE * (2 ** i) for i in range(_POPEN_MAX_RETRIES - 1))
         assert total >= 5.0, f"total backoff {total:.1f}s is too short to be useful"
 
 
 # ---------------------------------------------------------------------------
-# Fix 2: tiktoken cache pre-warm in instance.sh.j2
+# Fix 2: conda-unpack inside the flock in instance.sh.j2
 # ---------------------------------------------------------------------------
 
 def _render_template(extra_kwargs=None):
-    """Render the instance.sh.j2 template with minimal required variables."""
     from jinja2 import Environment, PackageLoader
     env = Environment(loader=PackageLoader("aegis", "templates"))
     template = env.get_template("instance.sh.j2")
@@ -108,55 +99,50 @@ def _render_template(extra_kwargs=None):
     return template.render(**kwargs)
 
 
-class TestTiktokenPreWarm:
-    """The rendered script must include the tiktoken cache pre-warm block."""
+class TestCondaUnpackInFlock:
+    """conda-unpack must run inside the flock so concurrent instances cannot
+    corrupt shared tokenizer files via simultaneous in-place rewrites."""
 
-    def test_tiktoken_cache_dir_exported(self):
+    def test_conda_unpack_inside_flock_block(self):
         script = _render_template()
-        assert "export TIKTOKEN_CACHE_DIR=/tmp/tiktoken_cache" in script
+        flock_start = script.index("flock 9")
+        # Find the closing paren of the flock subshell — sentinel is right after it
+        sentinel_pos = script.index(".setup_complete\n  fi\n)")
+        # Search for the full path to avoid matching occurrences in comments
+        unpack_pos = script.index("/tmp/conda_env/bin/conda-unpack")
+        assert flock_start < unpack_pos < sentinel_pos, (
+            "conda-unpack must appear inside the flock subshell, before the sentinel touch"
+        )
 
-    def test_flock_block_present(self):
+    def test_conda_unpack_not_called_after_flock(self):
         script = _render_template()
-        assert "flock 200" in script
-        assert "/tmp/tiktoken_cache.lock" in script
+        flock_close = script.index(".setup_complete\n  fi\n)") + len(".setup_complete\n  fi\n)")
+        after_flock = script[flock_close:]
+        assert "conda-unpack" not in after_flock, (
+            "conda-unpack must not appear outside the flock — that would allow concurrent runs"
+        )
 
-    def test_setup_complete_sentinel_checked(self):
+    def test_unpack_called_by_full_path(self):
+        """Inside the flock subshell the env isn't activated, so conda-unpack
+        must be invoked via its full path in /tmp/conda_env/bin/."""
         script = _render_template()
-        assert "/tmp/tiktoken_cache/.setup_complete" in script
+        assert "/tmp/conda_env/bin/conda-unpack" in script
 
-    def test_harmony_encoding_loaded(self):
+    def test_source_activate_still_present_after_flock(self):
+        """The parent shell still needs to activate the env after the flock."""
         script = _render_template()
-        assert "load_harmony_encoding" in script
-        assert "HARMONY_GPT_OSS" in script
+        flock_close = script.index(".setup_complete\n  fi\n)") + len(".setup_complete\n  fi\n)")
+        after_flock = script[flock_close:]
+        assert "source /tmp/conda_env/bin/activate" in after_flock
 
-    def test_pre_warm_runs_before_vllm_serve(self):
-        script = _render_template()
-        tiktoken_pos = script.index("TIKTOKEN_CACHE_DIR")
-        vllm_pos = script.index("vllm serve")
-        assert tiktoken_pos < vllm_pos, \
-            "tiktoken pre-warm must appear before 'vllm serve'"
-
-    def test_pre_warm_runs_after_conda_unpack(self):
+    def test_setup_complete_sentinel_after_unpack(self):
+        """Sentinel must be touched only after a successful unpack."""
         script = _render_template()
         unpack_pos = script.index("conda-unpack")
-        tiktoken_pos = script.index("TIKTOKEN_CACHE_DIR")
-        assert unpack_pos < tiktoken_pos, \
-            "tiktoken pre-warm must appear after 'conda-unpack'"
+        sentinel_pos = script.index("touch /tmp/conda_env/.setup_complete")
+        assert unpack_pos < sentinel_pos
 
-    def test_pre_warm_absent_without_conda_env(self):
-        """Tiktoken block is inside the conda_env branch; skip for apptainer."""
+    def test_no_bare_conda_unpack_without_conda_env(self):
+        """Apptainer path has no conda env, so conda-unpack must not appear."""
         script = _render_template(extra_kwargs={"conda_env": None, "apptainer_image": "/img.sif"})
-        assert "TIKTOKEN_CACHE_DIR" not in script
-
-    def test_pre_warm_failure_is_non_fatal(self):
-        """The block must use '|| true' so a missing harmony package doesn't abort launch."""
-        script = _render_template()
-        assert "|| true" in script
-
-    def test_flock_fd_does_not_conflict_with_conda_lock(self):
-        script = _render_template()
-        # conda lock uses fd 9; tiktoken lock must use a different fd
-        tiktoken_block_start = script.index("TIKTOKEN_CACHE_DIR")
-        tiktoken_snippet = script[tiktoken_block_start: tiktoken_block_start + 400]
-        assert "flock 9" not in tiktoken_snippet, \
-            "tiktoken lock fd must not collide with conda lock fd (9)"
+        assert "conda-unpack" not in script
