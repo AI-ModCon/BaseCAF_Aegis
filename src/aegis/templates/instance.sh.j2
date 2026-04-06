@@ -12,10 +12,21 @@ module load pti-gpu
 module load hdf5
 
 {% if conda_env %}
-mkdir -p /tmp/conda_env && tar -xzf /tmp/{{ conda_env.split('/')[-1] }} -C /tmp/conda_env
+# Serialize conda env extraction AND unpacking across all instances on this
+# node.  tar and conda-unpack both rewrite files in-place; running either
+# concurrently from multiple instances corrupts shared files (e.g. tokenizer
+# vocab), producing "invalid tiktoken vocab file" errors at scale.
+(
+  flock 9
+  if [ ! -f /tmp/conda_env/.setup_complete ]; then
+    mkdir -p /tmp/conda_env
+    tar -xzf /tmp/{{ conda_env.split('/')[-1] }} -C /tmp/conda_env
+    /tmp/conda_env/bin/conda-unpack
+    touch /tmp/conda_env/.setup_complete
+  fi
+) 9>/tmp/conda_env.lock
 set --
 source /tmp/conda_env/bin/activate
-conda-unpack
 export LD_LIBRARY_PATH=/tmp/conda_env/lib/python3.12/site-packages/intel_extension_for_pytorch/lib:/tmp/conda_env/lib:/tmp/conda_env/lib/python3.12/site-packages/torch/lib:${LD_LIBRARY_PATH}:/usr/lib64
 export ZE_FLAT_DEVICE_HIERARCHY=FLAT
 unset ONEAPI_DEVICE_SELECTOR

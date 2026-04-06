@@ -1,5 +1,6 @@
 """Core orchestration: stage weights, launch vLLM instances."""
 
+import errno
 import math
 import os
 import shlex
@@ -302,6 +303,28 @@ def _wait_for_instances(
     return [(n, p) for n, p in endpoints if (n, p) in ready]
 
 
+_POPEN_MAX_RETRIES = 8
+_POPEN_RETRY_BASE = 0.25  # seconds; doubles each attempt (0.25 → 32s max)
+
+
+def _popen_with_retry(cmd: list[str]) -> subprocess.Popen:
+    """Launch a subprocess, retrying on EAGAIN (fork limit hit at large scale)."""
+    for attempt in range(_POPEN_MAX_RETRIES):
+        try:
+            return subprocess.Popen(cmd, env=os.environ)
+        except BlockingIOError as exc:
+            if exc.errno != errno.EAGAIN or attempt == _POPEN_MAX_RETRIES - 1:
+                raise
+            wait = _POPEN_RETRY_BASE * (2 ** attempt)
+            print(
+                f"  [mpiexec] fork limit hit (EAGAIN), retry {attempt + 1}/"
+                f"{_POPEN_MAX_RETRIES - 1} in {wait:.2f}s …",
+                file=sys.stderr,
+            )
+            time.sleep(wait)
+    raise RuntimeError("unreachable")  # pragma: no cover
+
+
 def launch_instances(
     config: AegisConfig,
     staging_times: dict[str, float] | None = None,
@@ -416,7 +439,7 @@ def launch_instances(
                 ]
 
             _vlog(f"  [mpiexec] {shlex.join(mpi_cmd)}")
-            subprocess.Popen(mpi_cmd, env=os.environ)
+            _popen_with_retry(mpi_cmd)
 
             instance_idx += 1
 
