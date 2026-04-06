@@ -4,8 +4,6 @@ vllm_build_all_modelinfo_caches.py
 
 Pre-generate vLLM model-info caches by iterating over the vLLM model registry.
 
-Author: Nathan Scott Nichols (https://github.com/nscottnichols)
-
 Usage:
   export VLLM_CACHE_ROOT=$PWD/.vllm_cache
   python vllm_build_all_modelinfo_caches.py
@@ -298,3 +296,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
