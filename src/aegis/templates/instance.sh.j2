@@ -32,6 +32,19 @@ export ZE_FLAT_DEVICE_HIERARCHY=FLAT
 unset ONEAPI_DEVICE_SELECTOR
 {% if ze_affinity_mask %}export ZE_AFFINITY_MASK="{{ ze_affinity_mask }}"
 {% endif %}
+# Pre-warm harmony/tiktoken encoding cache (serialized per node) so that
+# concurrent vllm workers never race to write the same vocab file.
+export TIKTOKEN_CACHE_DIR=/tmp/tiktoken_cache
+(
+  flock 200
+  if [ ! -f /tmp/tiktoken_cache/.prewarm_complete ]; then
+    mkdir -p /tmp/tiktoken_cache
+    python -c "
+from openai_harmony import load_harmony_encoding, HarmonyEncodingName
+load_harmony_encoding(HarmonyEncodingName.HARMONY_GPT_OSS)
+" && touch /tmp/tiktoken_cache/.prewarm_complete
+  fi
+) 200>/tmp/tiktoken_prewarm.lock
 export CCL_PROCESS_LAUNCHER=None
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export FI_MR_CACHE_MONITOR=userfaultfd
