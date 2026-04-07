@@ -146,3 +146,57 @@ class TestCondaUnpackInFlock:
         """Apptainer path has no conda env, so conda-unpack must not appear."""
         script = _render_template(extra_kwargs={"conda_env": None, "apptainer_image": "/img.sif"})
         assert "conda-unpack" not in script
+
+
+# ---------------------------------------------------------------------------
+# Fix 3: tiktoken pre-warm block serializes vocab cache population per node
+# ---------------------------------------------------------------------------
+
+class TestTiktokenPrewarm:
+    """The tiktoken pre-warm block must serialize the first
+    load_harmony_encoding() call per node so that concurrent vllm workers
+    never race to write the same cache file."""
+
+    def test_tiktoken_cache_dir_exported(self):
+        script = _render_template()
+        assert "export TIKTOKEN_CACHE_DIR=/tmp/tiktoken_cache" in script
+
+    def test_prewarm_block_present(self):
+        script = _render_template()
+        assert "load_harmony_encoding" in script
+        assert ".prewarm_complete" in script
+
+    def test_prewarm_uses_separate_lock_fd(self):
+        """Pre-warm must use a different fd than the conda extraction flock
+        so the two serializations are independent."""
+        script = _render_template()
+        assert "flock 200" in script
+        assert "tiktoken_prewarm.lock" in script
+
+    def test_prewarm_after_conda_activation(self):
+        """Pre-warm must appear after conda env is activated (so python and
+        openai_harmony are available) but before vllm serve starts."""
+        script = _render_template()
+        activate_pos = script.index("source /tmp/conda_env/bin/activate")
+        prewarm_pos = script.index("load_harmony_encoding")
+        serve_pos = script.index("vllm serve")
+        assert activate_pos < prewarm_pos < serve_pos, (
+            "pre-warm must appear between conda activation and vllm serve"
+        )
+
+    def test_prewarm_does_not_suppress_errors(self):
+        """The pre-warm block must not swallow errors with 2>/dev/null or
+        || true — failures should be visible in job logs."""
+        script = _render_template()
+        # Find just the pre-warm block
+        prewarm_start = script.index("flock 200")
+        prewarm_end = script.index("tiktoken_prewarm.lock")
+        prewarm_block = script[prewarm_start:prewarm_end]
+        assert "2>/dev/null" not in prewarm_block
+        assert "|| true" not in prewarm_block
+
+    def test_no_prewarm_without_conda_env(self):
+        """Apptainer path has no conda env, so pre-warm must not appear."""
+        script = _render_template(extra_kwargs={"conda_env": None, "apptainer_image": "/img.sif"})
+        assert "TIKTOKEN_CACHE_DIR" not in script
+        assert "prewarm_complete" not in script
